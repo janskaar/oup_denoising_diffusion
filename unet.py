@@ -1,5 +1,5 @@
 """
-partly based on denoising-diffusion-flax repository
+Partly taken from denoising-diffusion-pytorch / denoising-diffusion-flax repositories
 """
 
 import jax
@@ -140,7 +140,7 @@ class ResidualBlock(nn.Module):
     activation : Callable
 
     @nn.compact
-    def __call__(self, x, time_emb, param_emb=None):
+    def __call__(self, x, time_emb, param_emb):
 
         y = nn.Conv(self.filters, kernel_size = (3,), strides = 1, padding = "SAME")(x)
         y = nn.LayerNorm(reduction_axes = (-1, -2))(y)
@@ -151,15 +151,15 @@ class ResidualBlock(nn.Module):
                             name="time_embedding_mlp.dense_0")(nn.silu(time_emb)) # [B, 2T], T is time embedding dim
         time_emb = time_emb[:,  None, :]  # [B, 1, 2T]  # broadcast over signal dim
 
+        param_emb = nn.Dense(features=2 * self.filters,
+                            name="param_embedding_mlp.dense_0")(nn.silu(param_emb)) # [B, 2T], T is time embedding dim
+        param_emb = param_emb[:,  None, :]  # [B, 1, 2T]  # broadcast over signal dim
+
         time_scale, time_shift = jnp.split(time_emb, 2, axis=-1)  # [B, 1, T]
         y = y * (1 + time_scale) + time_shift
 
-        if param_emb:
-            param_emb = nn.Dense(features=2 * self.filters,
-                                name="param_embedding_mlp.dense_0")(nn.silu(param_emb)) # [B, 2T], T is time embedding dim
-            param_emb = param_emb[:,  None, :]  # [B, 1, 2T]  # broadcast over signal dim
-            param_scale, param_shift = jnp.split(param_emb, 2, axis=-1)  # [B, 1, T]
-            y = y * (1 + param_scale) + param_shift
+        param_scale, param_shift = jnp.split(param_emb, 2, axis=-1)  # [B, 1, T]
+        y = y * (1 + param_scale) + param_shift
 
         y = nn.Conv(self.filters, kernel_size = (3,), strides = 1, padding = "SAME")(y)
         y = nn.LayerNorm(reduction_axes = (-1, -2))(y)
@@ -198,9 +198,12 @@ class UNET(nn.Module):
     encoder_start_filters : int
     encoder_filter_mults : Sequence[int]
     encoder_latent_dim : int
+    attention : bool
+
+    use_encoder : bool
 
     @nn.compact
-    def __call__(self, x, t, x0):
+    def __call__(self, x, t, z):
         time_dim = self.start_filters * 4
         # use sinusoidal embeddings to encode timesteps
         time_emb = SinusoidalPosEmb(time_dim)(t)  # [B, dim]
@@ -208,11 +211,18 @@ class UNET(nn.Module):
         time_emb = nn.gelu(time_emb)
         time_emb = nn.Dense(features=time_dim,  name="time_mlp.dense_1")(time_emb)
 
-        param_emb = Encoder(
-                start_filters = self.encoder_start_filters,
-                filter_mults = self.encoder_filter_mults,
-                latent_dim = self.encoder_latent_dim,
-                activation = self.activation)(x0)
+        if self.use_encoder:
+            param_emb = Encoder(
+                    start_filters = self.encoder_start_filters,
+                    filter_mults = self.encoder_filter_mults,
+                    latent_dim = self.encoder_latent_dim,
+                    activation = self.activation,
+                    attention = self.attention)(z)
+        else:
+            param_emb = nn.Dense(features=time_dim, name="param_mlp.dense_0")(z)
+            param_emb = nn.gelu(param_emb)
+            param_emb = nn.Dense(features=time_dim,  name="param_mlp.dense_1")(param_emb)
+
 
         x = nn.Conv(
             features= self.start_filters * self.filter_mults[0] ,
@@ -231,8 +241,8 @@ class UNET(nn.Module):
             x = ResidualBlock(filters = self.start_filters * mult,
                               activation = self.activation,
                               name=f"down_{i}_1")(x, time_emb, param_emb)
-
-            x = AttnBlock(name=f'down_{i}.attnblock_0')(x)
+            if self.attention:
+                x = AttnBlock(name=f'down_{i}.attnblock_0')(x)
             xs.append(x)
 
             if i < len(self.filter_mults) - 1:
@@ -243,7 +253,8 @@ class UNET(nn.Module):
         x = ResidualBlock(filters = self.start_filters * self.filter_mults[-1],
                           activation = self.activation,
                           name="middle_0")(x, time_emb, param_emb)
-        x = AttnBlock(use_linear_attention=False, name = 'mid.attenblock_0')(x)
+        if self.attention:
+            x = AttnBlock(use_linear_attention=False, name = 'mid.attenblock_0')(x)
         x = ResidualBlock(filters = self.start_filters * self.filter_mults[-1],
                           activation = self.activation,
                           name="middle_1")(x, time_emb, param_emb)
@@ -259,8 +270,8 @@ class UNET(nn.Module):
             x = ResidualBlock(filters = self.start_filters * mult,
                               activation = self.activation,
                               name=f"up_{i}_1")(jnp.concatenate((xs.pop(), x), axis=-1), time_emb, param_emb)
-
-            x = AttnBlock(name=f'up_{i}.attnblock_0')(x)
+            if self.attention:
+                x = AttnBlock(name=f'up_{i}.attnblock_0')(x)
 
             if i < len(self.filter_mults) - 1:
                 x = Upsample(self.start_filters * mult  // 2,
@@ -271,85 +282,6 @@ class UNET(nn.Module):
                           name="final_resblock")(x, time_emb, param_emb)
 
         return x        
-
-
-class UnconditionalUNET(nn.Module):
-
-    start_filters : int
-    filter_mults : Sequence[int]
-    out_channels: int
-    activation : Callable
-
-    @nn.compact
-    def __call__(self, x, t):
-        time_dim = self.start_filters * 4
-        # use sinusoidal embeddings to encode timesteps
-        time_emb = SinusoidalPosEmb(time_dim)(t)  # [B, dim]
-        time_emb = nn.Dense(features=time_dim, name="time_mlp.dense_0")(time_emb) # [B, 4*dim]
-        time_emb = nn.gelu(time_emb)
-        time_emb = nn.Dense(features=time_dim,  name="time_mlp.dense_1")(time_emb)
-
-        x = nn.Conv(
-            features= self.start_filters * self.filter_mults[0] ,
-            kernel_size=(3,), 
-            padding="SAME",
-            name="init.conv_0")(x)
-
-        # down
-        xs = []
-        for i, mult in enumerate(self.filter_mults):
-            x = ResidualBlock(filters = self.start_filters * mult,
-                              activation = self.activation,
-                              name=f"down_{i}_0")(x, time_emb)
-            xs.append(x)
-
-            x = ResidualBlock(filters = self.start_filters * mult,
-                              activation = self.activation,
-                              name=f"down_{i}_1")(x, time_emb)
-
-#            x = AttnBlock(name=f'down_{i}.attnblock_0')(x)
-            xs.append(x)
-
-            if i < len(self.filter_mults) - 1:
-                x = Downsample(self.start_filters * self.filter_mults[i+1],
-                               name=f"downsample_{i}")(x)
-
-        # middle
-        x = ResidualBlock(filters = self.start_filters * self.filter_mults[-1],
-                          activation = self.activation,
-                          name="middle_0")(x, time_emb)
-#        x = AttnBlock(use_linear_attention=False, name = 'mid.attenblock_0')(x)
-        x = ResidualBlock(filters = self.start_filters * self.filter_mults[-1],
-                          activation = self.activation,
-                          name="middle_1")(x, time_emb)
-
-
-
-        # up
-        for i, mult in enumerate(reversed(self.filter_mults)):
-            x = ResidualBlock(filters = self.start_filters * mult,
-                              activation = self.activation,
-                              name=f"up_{i}_0")(jnp.concatenate((xs.pop(), x), axis=-1), time_emb)
-
-            x = ResidualBlock(filters = self.start_filters * mult,
-                              activation = self.activation,
-                              name=f"up_{i}_1")(jnp.concatenate((xs.pop(), x), axis=-1), time_emb)
-
-#            x = AttnBlock(name=f'up_{i}.attnblock_0')(x)
-
-            if i < len(self.filter_mults) - 1:
-                x = Upsample(self.start_filters * mult  // 2,
-                             name=f"upsample_{i}")(x)
-
-        x = ResidualBlock(filters = self.out_channels,
-                          activation = self.activation,
-                          name="final_resblock")(x, time_emb)
-
-        return x        
-
-
-
-
 
 
 class UNETXENC(nn.Module):
@@ -429,6 +361,9 @@ class UNETXENC(nn.Module):
         return x        
 
 
+
+
+
 class EncodingResidualBlock(nn.Module):
 
     filters : int
@@ -451,12 +386,15 @@ class EncodingResidualBlock(nn.Module):
         return self.activation(y) + x
 
 
+
+
 class Encoder(nn.Module):
 
     start_filters : int
     filter_mults : Sequence[int]
     latent_dim : int
     activation : Callable
+    attention : bool
 
     @nn.compact
     def __call__(self, x):
@@ -479,7 +417,8 @@ class Encoder(nn.Module):
                               activation = self.activation,
                               name=f"down_{i}_1")(x)
 
-            x = AttnBlock(name=f'down_{i}.attnblock_0')(x)
+            if self.attention:
+                x = AttnBlock(name=f'down_{i}.attnblock_0')(x)
             xs.append(x)
 
             if i < len(self.filter_mults) - 1:
@@ -490,13 +429,16 @@ class Encoder(nn.Module):
         x = EncodingResidualBlock(filters = self.start_filters * self.filter_mults[-1],
                           activation = self.activation,
                           name="middle_0")(x)
-        x = AttnBlock(use_linear_attention=False, name = 'mid.attenblock_0')(x)
+        if self.attention:
+            x = AttnBlock(use_linear_attention=False, name = 'mid.attenblock_0')(x)
         x = x.reshape((x.shape[0], -1))
         x = nn.Dense(self.latent_dim)(x)
         return x        
 
 
 if __name__ == "__main__": 
+    import numpy as np
+    import matplotlib.pyplot as plt
 
     dummy_X = np.random.normal(size=(5, 1024, 2))
     print(nn.tabulate(
