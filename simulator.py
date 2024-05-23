@@ -29,7 +29,7 @@ class SimulationParameters:
 class ParticleSimulator:
     def __init__(self, z_0, params):
         self.p = params
-        self.z_0 = z_0
+        self.z_0 = z_0.copy()
         self._step = 0
         self.compute_propagators()
 
