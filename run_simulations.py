@@ -14,9 +14,10 @@ num_procs = 1
 
 z0 = np.zeros((num_procs, 2))
 
-num_sims = 100
+num_sims = 10000
 
 zs = []
+thetas = []
 ## Simulations
 for i in range(num_sims):
     print(i, end="\r")
@@ -30,7 +31,15 @@ for i in range(num_sims):
     )
 
     simulator = ParticleSimulator(z0, params)
-    simulator.simulate(500)
+    simulator.simulate(3000)
+    thetas.append(param_vals)
     zs.append(simulator.z.squeeze()) 
+
+thetas = np.array(thetas)
 zs = np.array(zs)
+
+zs = zs[:,:30000:10,:]
+
+np.save(os.path.join("data", "theta.npy"), thetas)
+np.save(os.path.join("data", "z.npy"), zs)
 

@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 from scipy.signal import welch
 
 from sampling import sample_loop, ddpm_sample_step, model_predict
-from unet import UNET, UnconditionalUNET, SinusoidalPosEmb
+from unet import UNET, SinusoidalPosEmb
 
 
 def float_to_str(x):
@@ -32,50 +32,6 @@ def write_log(step, loss, theta, fname):
 
     with open(fname, "a") as f:
         f.write(f"{step}," + ",".join(map(float_to_str, loss)) + "\n") 
-
-
-def get_dataset(config, fixed_points=False, norm=False):
-
-    if not fixed_points:
-        d = config.dir
-    else:
-        d = config.fixed_points_dir
-
-    files = os.listdir(d)
-    # sort by number in file
-    files.sort(key=lambda x: int(re.findall(r"\d+", x)[0]))
-    parameter_names = config.simulation_parameters
-
-    histograms = []
-    parameters = []
-    for infile in files:
-        infile = os.path.join(d, infile)
-        with h5py.File(infile, "r") as f:
-            grps = list(f.keys())
-            grps.sort(key=lambda x: int(re.findall(r"\d+", x)[0]))
-            for grp_name in grps:
-                # Population histograms, 1 ms bin size
-                hist_ex = f[grp_name]["hist_ex"][()]
-                hist_in = f[grp_name]["hist_in"][()]
-
-                param = []
-                for nm in parameter_names:
-                    param.append(f[grp_name].attrs[nm])
-
-                histograms.append((hist_ex, hist_in))
-                parameters.append(param)                
-    histograms = np.array(histograms).astype(np.float32)
-    parameters = np.array(parameters).astype(np.float32)
-    if norm:
-        histograms -= histograms.mean(-1, keepdims=True)
-        histograms /= histograms.std(-1, keepdims=True)
-
-        parameters -= parameters.min(0, keepdims=True)
-        parameters /= parameters.max(0, keepdims=True)
-        parameters *= 2.
-        parameters -= 1.
-
-    return histograms, parameters
 
 
 def random_slice(X, start, key, length):
@@ -98,7 +54,7 @@ def random_slice(X, start, key, length):
 
 random_slice_jit = jax.jit(partial(random_slice, length=1024))
 
-def train_data_gen(key, batch_size, X):
+def train_data_gen(key, batch_size, X, Theta):
     rng, key = jax.random.split(key)
     X = jax.random.permutation(key, X)
     rng, key = jax.random.split(rng)
@@ -110,7 +66,7 @@ def train_data_gen(key, batch_size, X):
         num += 1
 
     while i <= num - 1:
-        yield X[i * batch_size : (i + 1) * batch_size]
+        yield X[i * batch_size : (i + 1) * batch_size], Theta[i * batch_size : (i + 1) * batch_size]
         i += 1
 
 
@@ -150,7 +106,7 @@ def get_ddpm_params(config):
     alphas_bar = jnp.cumprod(alphas, axis=0)
     sqrt_alphas_bar = jnp.sqrt(alphas_bar)
     sqrt_1m_alphas_bar= jnp.sqrt(1. - alphas_bar)
-    
+
     return {
       "betas": betas,
       "alphas": alphas,
@@ -175,33 +131,29 @@ def q_sample(x, t, noise, ddpm_params):
 
 def create_train_state(rng, config: ml_collections.ConfigDict):
     """Creates initial `TrainState`."""
-    if config.model.unet == "UNET":
-        model = UNET(
-            start_filters = config.model.start_filters, 
-            filter_mults = config.model.filter_mults,
-            out_channels = config.data.channels,
-            activation = nn.silu,
-            encoder_start_filters = config.model.encoder_start_filters,
-            encoder_filter_mults = config.model.encoder_filter_mults,
-            encoder_latent_dim = config.model.encoder_latent_dim,
-        )
-
-
-    elif config.model.unet == "UnconditionalUNET":
-        model = UnconditionalUNET(
-            start_filters = config.model.start_filters, 
-            filter_mults = config.model.filter_mults,
-            out_channels = config.data.channels,
-            activation = nn.silu,
-        )
-
+    model = UNET(
+        start_filters = config.model.start_filters, 
+        filter_mults = config.model.filter_mults,
+        out_channels = config.data.channels,
+        activation = nn.silu,
+        encoder_start_filters = config.model.encoder_start_filters,
+        encoder_filter_mults = config.model.encoder_filter_mults,
+        encoder_latent_dim = config.model.encoder_latent_dim,
+        use_encoder = config.model.use_encoder,
+        attention = config.model.use_attention
+    )
 
     rng, rng_params = jax.random.split(rng, 2)
     input_dims = (1, config.data.length, config.data.channels)
+    if config.model.use_encoder:
+        condition_dims = input_dims
+    else:
+        condition_dims = (1, 4)
     params = model.init(
         rng_params, 
         jnp.ones(input_dims, dtype=jnp.float32), # noisy time series
         jnp.ones(input_dims[:1], dtype=jnp.float32), # t
+        jnp.ones(condition_dims, dtype=jnp.float32), # condition
     )["params"]
 
 
@@ -234,11 +186,12 @@ def create_train_state(rng, config: ml_collections.ConfigDict):
     return state
 
 
-def train_step(rng, state, batch, ddpm_params):
+def train_step(rng, state, batch, ddpm_params, use_encoder=True):
     print("Tracing train_step", flush=True)
 
     # run the forward diffusion process to generate noisy image x_t at timestep t
-    x = batch
+    x = batch[0]
+    theta = batch[1]
 
     # create batched timesteps: t with shape (B,)
     B, T, C = x.shape
@@ -253,7 +206,11 @@ def train_step(rng, state, batch, ddpm_params):
     x_t = q_sample(x, batched_t, noise, ddpm_params)
 
     def compute_loss(params):
-        pred = state.apply_fn({"params":params}, x_t, batched_t)
+        if use_encoder:
+            pred = state.apply_fn({"params":params}, x_t, batched_t, x)
+        else:
+            pred = state.apply_fn({"params":params}, x_t, batched_t, theta)
+
         loss = l2_loss(
                 pred.reshape((pred.shape[0], -1)), 
                 noise.reshape((noise.shape[0], -1))
@@ -270,11 +227,11 @@ def train_step(rng, state, batch, ddpm_params):
     return new_state, metrics
 
 
-def train(config, X):
+def train(config, X, Theta):
 
     rng = jax.random.PRNGKey(config.seed)
 
-    train_gen = partial(train_data_gen, batch_size=config.data.batch_size, X=X)
+    train_gen = partial(train_data_gen, batch_size=config.data.batch_size, X=X, Theta=Theta)
     num_steps = config.training.num_train_steps
     rng, state_rng = jax.random.split(rng)
     state = create_train_state(state_rng, config)
@@ -299,6 +256,10 @@ def train(config, X):
 
         tic = time.time()
         for batch in train_iter:
+            print(len(batch))
+            print(batch[0].shape)
+            print(batch[1].shape)
+
             print(step, end="\r", flush=True)
             rng, train_step_rng = jax.random.split(rng, 2)
             state, metrics = train_step_jit(train_step_rng, state, batch)
@@ -312,3 +273,4 @@ def train(config, X):
             break
 
     return np.array(loss_history), state
+
