@@ -16,7 +16,7 @@ config = ml_collections.ConfigDict()
 
 # training
 config.training = training = ml_collections.ConfigDict()
-training.num_train_steps = 20
+training.num_train_steps = 1000
 
 # ddpm 
 config.ddpm = ddpm = ml_collections.ConfigDict()
@@ -47,6 +47,7 @@ optim.beta1 = 0.9
 optim.beta2 = 0.999
 optim.eps = 1e-8
 optim.warmup_steps = 5 
+optim.use_full_loss = True
 
 config.seed = 123
 
@@ -69,10 +70,4 @@ sample = sample_loop(key, state, sample_shape, condition, sample_step, config.dd
 fs, sample_psd = welch(sample.squeeze())
 fs, data_psd = welch(X.squeeze())
 
-plt.plot(sample_psd.mean(0), label="sample", color="black")
-plt.plot(data_psd.mean(0), label="data full")
-plt.plot(data_psd_1.mean(0), label="data 1")
-plt.plot(data_psd_2.mean(0), label="data 2")
-plt.legend()
-plt.show()
 
