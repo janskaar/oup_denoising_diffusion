@@ -33,13 +33,11 @@ class ParticleSimulator:
         self._step = 0
         self.compute_propagators()
 
-
     def compute_propagators(self):
         A = np.array(
             [[-1.0 / self.p.tau_y, 0.0], [1.0 / self.p.C, -1.0 / self.p.tau_x]]
         )
         self.expectation_prop = expm(A * self.p.dt)
-
 
     def simulate(self, t):
         num_steps = int(t / self.p.dt)
@@ -61,4 +59,3 @@ class ParticleSimulator:
         self.z[i, :, 0] += (
             np.random.randn(self.p.num_procs) * self.p.sigma_noise * np.sqrt(self.p.dt)
         )
-

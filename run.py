@@ -18,7 +18,7 @@ config = ml_collections.ConfigDict()
 config.training = training = ml_collections.ConfigDict()
 training.num_train_steps = 1000
 
-# ddpm 
+# ddpm
 config.ddpm = ddpm = ml_collections.ConfigDict()
 ddpm.beta_schedule = "linear"
 ddpm.timesteps = 1000
@@ -41,12 +41,12 @@ model.use_attention = False
 
 # optim
 config.optim = optim = ml_collections.ConfigDict()
-optim.optimizer = 'Adam'
+optim.optimizer = "Adam"
 optim.learning_rate = 1e-3
 optim.beta1 = 0.9
 optim.beta2 = 0.999
 optim.eps = 1e-8
-optim.warmup_steps = 5 
+optim.warmup_steps = 5
 optim.use_full_loss = True
 
 config.seed = 123
@@ -61,13 +61,13 @@ sample_step = partial(ddpm_sample_step, ddpm_params=ddpm_params)
 sample_step = jax.jit(sample_step)
 sample_shape = (20, 1024, 2)
 
-condition = X[:20,1024:2048]
+condition = X[:20, 1024:2048]
 
 rng = jax.random.PRNGKey(1)
 rng, key = jax.random.split(rng)
-sample = sample_loop(key, state, sample_shape, condition, sample_step, config.ddpm.timesteps)
+sample = sample_loop(
+    key, state, sample_shape, condition, sample_step, config.ddpm.timesteps
+)
 
 fs, sample_psd = welch(sample.squeeze())
 fs, data_psd = welch(X.squeeze())
-
-
