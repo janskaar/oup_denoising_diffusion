@@ -7,46 +7,19 @@ import numpy as np
 from scipy.signal import welch
 import os, time, h5py
 from functools import partial
-import ml_collections
 import matplotlib.pyplot as plt
+from default_config import config
 
-## Config for diffusion model
-config = ml_collections.ConfigDict()
-
-# training
-config.training = training = ml_collections.ConfigDict()
-training.num_train_steps = 5000
-
-# ddpm
-config.ddpm = ddpm = ml_collections.ConfigDict()
-ddpm.beta_schedule = "linear"
-ddpm.timesteps = 1000
+config.training.num_train_steps = 5000
 
 # data
-config.data = data = ml_collections.ConfigDict()
-data.batch_size = 64
-data.length = 1024
-data.channels = 2
-
-# model
-config.model = model = ml_collections.ConfigDict()
-model.use_encoder = True
-model.start_filters = 16
-model.filter_mults = (1, 2, 4, 8)
-model.encoder_start_filters = 16
-model.encoder_filter_mults = (1, 2, 4, 8)
-model.encoder_latent_dim = 4
-model.use_attention = False
+config.data.batch_size = 64
+config.data.length = 1024
+config.data.channels = 2
 
 # optim
-config.optim = optim = ml_collections.ConfigDict()
-optim.optimizer = "Adam"
-optim.learning_rate = 1e-7
-optim.beta1 = 0.9
-optim.beta2 = 0.999
-optim.eps = 1e-8
-optim.warmup_steps = 500
-optim.use_full_loss = True
+config.optim.learning_rate = 1e-7
+config.optim.use_full_loss = True
 
 config.seed = 123
 
