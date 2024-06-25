@@ -195,8 +195,8 @@ def train_step(rng, state, batch, ddpm_params, use_encoder=True, use_full_loss=T
         if use_full_loss:
             loss = loss / (
                 2
-                * ddpm_params["alphas"][batched_t, None, None]
-                * (1 - ddpm_params["alphas_bar"][batched_t, None, None])
+                * ddpm_params["alphas"][batched_t, None]
+                * (1 - ddpm_params["alphas_bar"][batched_t, None])
             )
 
         return loss.mean()
