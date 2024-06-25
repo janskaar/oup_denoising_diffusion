@@ -234,17 +234,20 @@ def train(config, X, Theta):
 
     # for plotting loss
     loss_history = []
+    time_history = []
     break_flag = False
     while True:
         rng, key = jax.random.split(rng)
         train_iter = train_gen(key)
 
-        tic = time.time()
         for batch in train_iter:
+            tic = time.time()
             print(step, end="\r", flush=True)
             rng, train_step_rng = jax.random.split(rng, 2)
             state, metrics = train_step_jit(train_step_rng, state, batch)
             loss_history.append(metrics["loss"])
+            toc = time.time()
+            time_history.append(toc - tic)
             step += 1
             if step > config.training.num_train_steps:
                 break_flag = True
@@ -253,4 +256,7 @@ def train(config, X, Theta):
         if break_flag:
             break
 
-    return np.array(loss_history), state
+    metrics = {"loss": np.array(loss_history),
+               "step_time": np.array(time_history)}
+
+    return metrics, state
