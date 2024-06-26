@@ -5,11 +5,20 @@ from sampling import sample_loop, ddpm_sample_step
 import jax
 import numpy as np
 from scipy.signal import welch
+from scipy.stats.qmc import Halton
 import os, time, h5py, re
 from functools import partial
 import matplotlib.pyplot as plt
 from default_config import config as default_config
 
+if "SLURM_PROCID" in os.environ:
+    base_seed = int(os.environ["SLURM_PROCID"])
+else:
+    base_seed = int(time.time())
+
+print("base seed: ", base_seed, flush=True)
+
+np.random.seed(base_seed)
 
 def norm_data(X, Theta):
     # mean 0, std 1
@@ -39,23 +48,22 @@ sample_step = jax.jit(sample_step)
 sample_shape = (len(X_fp), 1024, 2)
 condition = X_fp[:, 1024:2048]
 
-def train_and_save(config):
+def train_and_save(config, sim_index):
     tic = time.time()
     metrics, state = train(config, X, Theta)
     toc = time.time()
 
     print(f"Trained in {toc - tic:.1f} seconds", flush=True)
 
-    rng = jax.random.PRNGKey(1)
+    rng = jax.random.PRNGKey(config.seed)
     rng, key = jax.random.split(rng)
     sample = sample_loop(
         key, state, sample_shape, condition, sample_step, config.ddpm.timesteps
     )
 
 
-    # lr representation
-    base, exp = (int(d) for d in re.findall("\d+", f"{config.optim.learning_rate:.0E}"))
-    with h5py.File(f"results/results_simple_loss_b{config.data.batch_size}_lr{base}_{exp}.h5", "w") as f:
+    with h5py.File(outfile, "a") as f:
+        grp = f.create_grp(f"{sim_index:02d}")
         f.create_dataset("sample", data=sample)
         f.create_dataset("condition", data=condition)
         f.create_dataset("loss", data=metrics["loss"])
@@ -70,23 +78,28 @@ def train_and_save(config):
             else:
                 grp.attrs[key_outer] = config_inner
 
-batch_sizes = [64, 128, 512]
-lrs = [1e-3, 1e-4, 1e-5, 1e-6]
+default_config.optim.use_full_loss = True
+outfile = f"results/results_full_loss_16_16.h5"
 
-for batch_size in batch_sizes:
-    for lr in lrs:
-        config = default_config.copy_and_resolve_references()
-        config.data.batch_size = batch_size
-        config.optim.learning_rate = lr
-        train_and_save(config)
-        break
-    break
+num_samples = 10
 
+batch_size = 128
 
+sampler = Halton(d=1, scramble=True, seed=np.random.randint(2 ** 32))
+learning_rates = sampler.random(n=10)
 
-
-
+# log space
+learning_rates *= (np.log(1e-1) - np.log(1e-5))
+learning_rates += np.log(1e-5)
+learning_rates = np.exp(learning_rates).squeeze()
 
 
-
+for i, lr in enumerate(learning_rates):
+    config = default_config.copy_and_resolve_references()
+    config.model.start_filters = 16
+    config.model.encoder_start_filters = 16
+    config.data.batch_size = batch_size
+    config.optim.learning_rate = lr
+    config.seed = np.random.randint(2 ** 32)
+    train_and_save(config, i)
 
