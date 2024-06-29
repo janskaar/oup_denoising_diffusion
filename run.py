@@ -2,13 +2,17 @@ from simulator import ParticleSimulator, SimulationParameters
 from unet import UNET
 from diffusion import train, get_ddpm_params
 from sampling import sample_loop, ddpm_sample_step
-import jax
+import jax, orbax
+from flax.training import orbax_utils
 import numpy as np
 from scipy.signal import welch
 import os, time, h5py
+from pathlib import Path
 from functools import partial
 import matplotlib.pyplot as plt
 from default_config import config
+
+path = os.path.join(Path(__file__).parent)
 
 config.training.num_train_steps = 5000
 
@@ -18,11 +22,10 @@ config.data.length = 1024
 config.data.channels = 2
 
 # optim
-config.optim.learning_rate = 1e-7
+config.optim.learning_rate = 1e-3
 config.optim.use_full_loss = True
 
 config.seed = 123
-
 
 def norm_data(X, Theta):
     # mean 0, std 1
@@ -63,7 +66,7 @@ sample = sample_loop(
     key, state, sample_shape, condition, sample_step, config.ddpm.timesteps
 )
 
-with h5py.File("results/results_full_loss_b64_lr7.h5", "w") as f:
+with h5py.File("results_full/results.h5", "w") as f:
     f.create_dataset("sample", data=sample)
     f.create_dataset("condition", data=condition)
     f.create_dataset("loss", data=metrics["loss"])
@@ -77,4 +80,9 @@ with h5py.File("results/results_full_loss_b64_lr7.h5", "w") as f:
                 grp.attrs[key_outer + "." + key_inner] = config_inner[key_inner]
         else:
             grp.attrs[key_outer] = config_inner
+
+ckpt = {'model': state, 'config': config}
+orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+save_args = orbax_utils.save_args_from_target(ckpt)
+orbax_checkpointer.save(os.path.join(path, "results_full", f"checkpoint"), ckpt, save_args=save_args)
 

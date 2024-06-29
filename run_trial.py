@@ -63,23 +63,23 @@ def train_and_save(config, sim_index):
 
 
     with h5py.File(outfile, "a") as f:
-        grp = f.create_grp(f"{sim_index:02d}")
-        f.create_dataset("sample", data=sample)
-        f.create_dataset("condition", data=condition)
-        f.create_dataset("loss", data=metrics["loss"])
-        f.create_dataset("time", data=metrics["step_time"])
+        grp = f.create_group(f"{sim_index:02d}")
+        grp.create_dataset("sample", data=sample)
+        grp.create_dataset("condition", data=condition)
+        grp.create_dataset("loss", data=metrics["loss"])
+        grp.create_dataset("time", data=metrics["step_time"])
 
-        grp = f.create_group("config")
+        subgrp = grp.create_group("config")
         for key_outer in config.keys():
             config_inner = config[key_outer]
             if hasattr(config_inner, "keys"): # if it's another dict, loop through the keys
                 for key_inner in config_inner.keys():
-                    grp.attrs[key_outer + "." + key_inner] = config_inner[key_inner]
+                    subgrp.attrs[key_outer + "." + key_inner] = config_inner[key_inner]
             else:
-                grp.attrs[key_outer] = config_inner
+                subgrp.attrs[key_outer] = config_inner
 
-default_config.optim.use_full_loss = True
-outfile = f"results/results_full_loss_16_16.h5"
+default_config.optim.use_full_loss = False
+outfile = f"results/results_simple_loss_32_16.h5"
 
 num_samples = 10
 
@@ -96,7 +96,7 @@ learning_rates = np.exp(learning_rates).squeeze()
 
 for i, lr in enumerate(learning_rates):
     config = default_config.copy_and_resolve_references()
-    config.model.start_filters = 16
+    config.model.start_filters = 32
     config.model.encoder_start_filters = 16
     config.data.batch_size = batch_size
     config.optim.learning_rate = lr
