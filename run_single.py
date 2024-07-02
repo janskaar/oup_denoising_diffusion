@@ -89,7 +89,7 @@ def train_and_save(config, sim_index):
 
 default_config.optim.use_full_loss = False
 outfile = f"results_final/results_simple_loss_32_32.h5"
-model_outfile = f"results_final/checkpoint"
+model_outfile = f"results_final/checkpoint_32_32"
 
 batch_size = 128
 
@@ -97,8 +97,9 @@ config = default_config.copy_and_resolve_references()
 config.model.start_filters = 32
 config.model.encoder_start_filters = 32
 config.data.batch_size = batch_size
-config.optim.learning_rate = lr
+config.optim.learning_rate = 2e-3
 config.seed = np.random.randint(2 ** 32)
-config.training.num_train_steps = 100
+config.optim.warmup_steps = 4
+config.training.num_train_steps = 10
 train_and_save(config, 1)
 
