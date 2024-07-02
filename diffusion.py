@@ -94,6 +94,33 @@ def l2_loss(logit, target):
     return (logit - target) ** 2
 
 
+def simple_loss(params, state, inp, noise):
+    x_t, conditon, batched_t = inp
+    pred = state.apply_fn({"params": params}, x_t, batched_t, condition)
+
+    loss = l2_loss(
+        pred.reshape((pred.shape[0], -1)), noise.reshape((noise.shape[0], -1))
+    )
+
+    return loss.mean()
+
+
+def full_loss(params, state, inp, noise):
+    pred = state.apply_fn({"params": params}, x_t, batched_t, condition)
+
+    loss = l2_loss(
+        pred.reshape((pred.shape[0], -1)), noise.reshape((noise.shape[0], -1))
+    )
+
+    loss = loss / (
+        2
+        * ddpm_params["alphas"][batched_t, None]
+        * (1 - ddpm_params["alphas_bar"][batched_t, None])
+    )
+
+    return loss.mean()
+
+
 def q_sample(x, t, noise, ddpm_params):
     sqrt_alpha_bar = ddpm_params["sqrt_alphas_bar"][t, None, None]
     sqrt_1m_alpha_bar = ddpm_params["sqrt_1m_alphas_bar"][t, None, None]
@@ -161,12 +188,20 @@ def create_train_state(rng, config: ml_collections.ConfigDict):
     return state
 
 
-def train_step(rng, state, batch, ddpm_params, use_encoder=True, use_full_loss=True):
+def train_step(rng, state, x, condition, ddpm_params, loss_fn):
+    """
+    Runs a single training step of the model.
+
+    loss_fn must take the following arguments:
+        1. parameters to be differentiated wrt
+        2. state object with model
+        3. (X, condition, t) - input data for the model
+        4. noise - what the model predicts
+    """
+
     print("Tracing train_step", flush=True)
 
     # run the forward diffusion process to generate noisy image x_t at timestep t
-    x = batch[0]
-    theta = batch[1]
 
     # create batched timesteps: t with shape (B,)
     B, T, C = x.shape
@@ -182,27 +217,8 @@ def train_step(rng, state, batch, ddpm_params, use_encoder=True, use_full_loss=T
     # generate the noisy image (input for denoise model)
     x_t = q_sample(x, batched_t, noise, ddpm_params)
 
-    def compute_loss(params):
-        if use_encoder:
-            pred = state.apply_fn({"params": params}, x_t, batched_t, x)
-        else:
-            pred = state.apply_fn({"params": params}, x_t, batched_t, theta)
-
-        loss = l2_loss(
-            pred.reshape((pred.shape[0], -1)), noise.reshape((noise.shape[0], -1))
-        )
-
-        if use_full_loss:
-            loss = loss / (
-                2
-                * ddpm_params["alphas"][batched_t, None]
-                * (1 - ddpm_params["alphas_bar"][batched_t, None])
-            )
-
-        return loss.mean()
-
-    grad_fn = jax.value_and_grad(compute_loss)
-    loss, grads = grad_fn(state.params)
+    grad_fn = jax.value_and_grad(loss_fn)
+    loss, grads = grad_fn(state.params, state, (X, condition, batched_t), noise)
     metrics = {"loss": loss}
     new_state = state.apply_gradients(grads=grads)
     return new_state, metrics
@@ -220,12 +236,13 @@ def train(config, X, Theta):
 
     ddpm_params = get_ddpm_params(config.ddpm)
 
+    loss_fn = full_loss if config.optim.use_full_loss else simple_loss
     train_step_jit = partial(
         train_step,
         ddpm_params=ddpm_params,
-        use_encoder=config.model.use_encoder,
-        use_full_loss=config.optim.use_full_loss,
+        loss_fn=loss_fn
     )
+
     train_step_jit = jax.jit(train_step_jit)
 
     step = 0
