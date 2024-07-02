@@ -95,7 +95,7 @@ def l2_loss(logit, target):
 
 
 def simple_loss(params, state, inp, noise):
-    x_t, conditon, batched_t = inp
+    x_t, condition, batched_t = inp
     pred = state.apply_fn({"params": params}, x_t, batched_t, condition)
 
     loss = l2_loss(
@@ -106,6 +106,7 @@ def simple_loss(params, state, inp, noise):
 
 
 def full_loss(params, state, inp, noise):
+    x_t, condition, batched_t = inp
     pred = state.apply_fn({"params": params}, x_t, batched_t, condition)
 
     loss = l2_loss(
@@ -218,7 +219,7 @@ def train_step(rng, state, x, condition, ddpm_params, loss_fn):
     x_t = q_sample(x, batched_t, noise, ddpm_params)
 
     grad_fn = jax.value_and_grad(loss_fn)
-    loss, grads = grad_fn(state.params, state, (X, condition, batched_t), noise)
+    loss, grads = grad_fn(state.params, state, (x_t, condition, batched_t), noise)
     metrics = {"loss": loss}
     new_state = state.apply_gradients(grads=grads)
     return new_state, metrics
@@ -261,7 +262,8 @@ def train(config, X, Theta):
             tic = time.time()
             print(step, end="\r", flush=True)
             rng, train_step_rng = jax.random.split(rng, 2)
-            state, metrics = train_step_jit(train_step_rng, state, batch)
+            condition = batch[0] if config.model.use_encoder else batch[1]
+            state, metrics = train_step_jit(train_step_rng, state, batch[0], condition)
             loss_history.append(metrics["loss"])
             toc = time.time()
             time_history.append(toc - tic)
