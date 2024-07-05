@@ -122,6 +122,37 @@ def full_loss(params, state, inp, noise):
     return loss.mean()
 
 
+def compute_loss_full_chain(rng, state, X, condition, ddpm_params):
+    """
+    Compute loss over all diffusion time steps.
+    Jit this function in order to avoid re-compiling inner loss function.
+    """
+
+    t = jnp.tile(jnp.arange(1000)[::-1][:, None], (1, len(X)))
+
+    def loss_at_t(carry, t):
+        """
+        Carries only rng key, all other variables are static
+        """
+        print("Tracing loss_at_t")
+
+        rng, key = jax.random.split(carry["key"])
+        noise = jax.random.normal(carry["key"], X.shape)
+        x_t = q_sample(X, t, noise, ddpm_params)
+        pred = state.apply_fn({"params": state.params}, x_t, t, condition)
+
+        loss = l2_loss(
+            pred.reshape((pred.shape[0], -1)), noise.reshape((noise.shape[0], -1))
+        )
+
+        carry = {"key": rng}
+        return carry, loss.mean(-1)
+
+    carry = {"key": rng}
+    carry, losses = jax.lax.scan(loss_at_t, carry, xs=t)
+    return losses
+
+
 def q_sample(x, t, noise, ddpm_params):
     sqrt_alpha_bar = ddpm_params["sqrt_alphas_bar"][t, None, None]
     sqrt_1m_alpha_bar = ddpm_params["sqrt_1m_alphas_bar"][t, None, None]
@@ -225,27 +256,80 @@ def train_step(rng, state, x, condition, ddpm_params, loss_fn):
     return new_state, metrics
 
 
-def train(config, X, Theta):
+def norm_data(X, Theta):
+    # mean 0, std 1
+    X = X - X.mean(axis=1, keepdims=True)
+    X /= X.std(axis=1, keepdims=True)
+
+    # limit to [-1, 1]
+    Theta = Theta - Theta.min(axis=0, keepdims=True)
+    Theta /= Theta.max(axis=0, keepdims=True)
+    Theta *= 2
+    Theta -= 1
+    return X, Theta
+
+
+def run_to_file(fn, fname, step, name, *args):
+    results = fn(args)
+    with h5py.File(fname, "r+") as f:
+        grp = f.create_group(f"{step}")
+        grp.create_dataset(name, np.asarray(results))
+
+
+def train(config):
     rng = jax.random.PRNGKey(config.seed)
+
+    ## Load data
+    X = np.load(config.data.X_train_path)
+    Theta = np.load(config.data.Theta_train_path)
+    X, Theta = norm_data(X, Theta)
+
+    X_fp = np.load(config.data.X_fixed_points_path)
+    Theta_fp = np.load(config.data.Theta_fixed_points_path)
+    X_fp, Theta_fp = norm_data(X_fp, Theta_fp)
+    X_fp = X_fp[:, 1024:2048, :]
 
     train_gen = partial(
         train_data_gen, batch_size=config.data.batch_size, X=X, Theta=Theta
     )
-    num_steps = config.training.num_train_steps
+
+    ## Create data generator, init model
     rng, state_rng = jax.random.split(rng)
     state = create_train_state(state_rng, config)
 
-    ddpm_params = get_ddpm_params(config.ddpm)
-
+    ## Jit and partial
     loss_fn = full_loss if config.optim.use_full_loss else simple_loss
-    train_step_jit = partial(
-        train_step,
-        ddpm_params=ddpm_params,
-        loss_fn=loss_fn
-    )
-
+    ddpm_params = get_ddpm_params(config.ddpm)
+    train_step_jit = partial(train_step, ddpm_params=ddpm_params, loss_fn=loss_fn)
     train_step_jit = jax.jit(train_step_jit)
 
+    compute_loss_full_chain = partial(
+        compute_loss_full_chain, X=X_fp, condition=X_fp, ddpm_params=ddpm_params
+    )
+    compute_loss_full_chain_jit = jax.jit(compute_loss_full_chain)
+
+    sample_step = jax.jit(sample_step)
+    sample_loop = partial(
+        shape=X_fp.shape,
+        condition=X_fp,
+        sample_step=sample_step,
+        timesteps=config.ddpm.timesteps,
+    )
+
+    ## Specify where to save periodic training evals
+    fconfig_full_chain_loss = {
+        "file": config.training.eval_file,
+        "group": step,
+        "name": "full_chain_loss",
+    }
+
+    fconfig_samples = {
+        "file": config.training.eval_file,
+        "group": step,
+        "name": "samples",
+    }
+
+    ## Init helper vars and training loop
     step = 0
 
     start_time = time.time()
@@ -254,6 +338,7 @@ def train(config, X, Theta):
     loss_history = []
     time_history = []
     break_flag = False
+    eval_flag = False
     while True:
         rng, key = jax.random.split(rng)
         train_iter = train_gen(key)
@@ -270,12 +355,32 @@ def train(config, X, Theta):
             step += 1
             if step > config.training.num_train_steps:
                 break_flag = True
+                eval_flag = True
                 break
+
+            if step % config.training.eval_every == 0:
+                eval_flag = True
+
+        if eval_flag:
+            rng, key = jax.random.split(rng)
+            run_to_file(
+                compute_loss_full_chain_jit,
+                fconfig_full_chain_loss,
+                key,
+                state,
+            )
+
+            rng, key = jax.random.split(rng)
+            run_to_file(
+                sample_loop,
+                fconfig_samples,
+                key,
+                state,
+            )
 
         if break_flag:
             break
 
-    metrics = {"loss": np.array(loss_history),
-               "step_time": np.array(time_history)}
+    metrics = {"loss": np.array(loss_history), "step_time": np.array(time_history)}
 
     return metrics, state
