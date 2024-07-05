@@ -1,4 +1,5 @@
 import ml_collections
+import os
 
 
 ## Config for diffusion model
@@ -18,6 +19,11 @@ config.data = data = ml_collections.ConfigDict()
 data.batch_size = 64
 data.length = 1024
 data.channels = 2
+data.X_train_path = os.path.join("data", "z.npy")
+data.Theta_train_path = os.path.join("data", "theta.npy")
+data.X_fixed_points_path = os.path.join("data", "z_fixed_points.npy")
+data.Theta_fixed_points_path = os.path.join("data", "theta_fixed_points.npy")
+
 
 # model
 config.model = model = ml_collections.ConfigDict()
