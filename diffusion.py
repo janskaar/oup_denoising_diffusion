@@ -188,7 +188,7 @@ def create_train_state(rng, config: ml_collections.ConfigDict):
         jnp.ones(condition_dims, dtype=jnp.float32),  # condition
     )["params"]
 
-    warmup_steps = config.optim.warmup_steps
+    warmup_steps = config.training.num_warmup_steps
     warmup_fn = optax.linear_schedule(
         init_value=0.0,
         end_value=config.optim.learning_rate,
@@ -269,11 +269,15 @@ def norm_data(X, Theta):
     return X, Theta
 
 
-def run_to_file(fn, fname, step, name, *args):
-    results = fn(args)
-    with h5py.File(fname, "r+") as f:
-        grp = f.create_group(f"{step}")
-        grp.create_dataset(name, np.asarray(results))
+def run_to_file(fn, fconfig, step, *args):
+    results = fn(*args)
+    with h5py.File(fconfig["file"], "a") as f:
+        grp = f"{step}"
+        if grp in f:
+            group = f[grp]
+        else:
+            group = f.create_group(grp)
+        group.create_dataset(fconfig["name"], data=np.asarray(results))
 
 
 def train(config):
@@ -298,34 +302,34 @@ def train(config):
     state = create_train_state(state_rng, config)
 
     ## Jit and partial
-    loss_fn = full_loss if config.optim.use_full_loss else simple_loss
+    loss_fn = full_loss if config.training.use_full_loss else simple_loss
     ddpm_params = get_ddpm_params(config.ddpm)
     train_step_jit = partial(train_step, ddpm_params=ddpm_params, loss_fn=loss_fn)
     train_step_jit = jax.jit(train_step_jit)
 
-    compute_loss_full_chain = partial(
+    compute_loss_full_chain_jit = partial(
         compute_loss_full_chain, X=X_fp, condition=X_fp, ddpm_params=ddpm_params
     )
-    compute_loss_full_chain_jit = jax.jit(compute_loss_full_chain)
+    compute_loss_full_chain_jit = jax.jit(compute_loss_full_chain_jit)
 
-    sample_step = jax.jit(sample_step)
-    sample_loop = partial(
+    sample_step_jit = partial(ddpm_sample_step, ddpm_params=ddpm_params)
+    sample_step_jit = jax.jit(sample_step_jit)
+    sample_loop_partial = partial(
+        sample_loop,
         shape=X_fp.shape,
         condition=X_fp,
-        sample_step=sample_step,
+        sample_step=sample_step_jit,
         timesteps=config.ddpm.timesteps,
     )
 
     ## Specify where to save periodic training evals
     fconfig_full_chain_loss = {
         "file": config.training.eval_file,
-        "group": step,
         "name": "full_chain_loss",
     }
 
     fconfig_samples = {
         "file": config.training.eval_file,
-        "group": step,
         "name": "samples",
     }
 
@@ -366,21 +370,26 @@ def train(config):
             run_to_file(
                 compute_loss_full_chain_jit,
                 fconfig_full_chain_loss,
+                step,
                 key,
                 state,
             )
 
             rng, key = jax.random.split(rng)
             run_to_file(
-                sample_loop,
+                sample_loop_partial,
                 fconfig_samples,
+                step,
                 key,
                 state,
             )
 
         if break_flag:
+            ckpt = {'model': state, 'config': config}
+            orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+            save_args = orbax_utils.save_args_from_target(ckpt)
+            orbax_checkpointer.save(config.training.checkpoint_dir, ckpt, save_args=save_args)
+
+
             break
 
-    metrics = {"loss": np.array(loss_history), "step_time": np.array(time_history)}
-
-    return metrics, state

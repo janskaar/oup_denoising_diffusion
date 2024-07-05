@@ -8,6 +8,10 @@ config = ml_collections.ConfigDict()
 # training
 config.training = training = ml_collections.ConfigDict()
 training.num_train_steps = 5000
+training.eval_every = 1000
+training.num_warmup_steps = 500
+training.use_full_loss = False
+
 
 # ddpm
 config.ddpm = ddpm = ml_collections.ConfigDict()
@@ -42,7 +46,6 @@ optim.learning_rate = 1e-4
 optim.beta1 = 0.9
 optim.beta2 = 0.999
 optim.eps = 1e-8
-optim.warmup_steps = 500
-optim.use_full_loss = False
+
 
 config.seed = 123
