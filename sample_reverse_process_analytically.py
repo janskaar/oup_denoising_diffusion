@@ -125,7 +125,6 @@ for i in reversed(range(1000)):
         samples.append(sample)
     toc = time.time()
     print(f"step {i}, {toc - tic:.1f} s")
-    break
 
 samples = np.array(samples)
 
@@ -139,16 +138,9 @@ with h5py.File("reverse_process_analytical_samples.h5", "a") as f:
 
 ## 
 
-
 with h5py.File("reverse_process_analytical_samples.h5", "r") as f:
     a = f["samples"][()]
     print(f.keys())
-
-
-
-
-
-
 
 
 
