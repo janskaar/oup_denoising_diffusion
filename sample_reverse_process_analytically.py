@@ -139,8 +139,40 @@ with h5py.File("reverse_process_analytical_samples.h5", "a") as f:
 ## 
 
 with h5py.File("reverse_process_analytical_samples.h5", "r") as f:
-    a = f["samples"][()]
-    print(f.keys())
+    samples = f["samples"][()]
 
+
+## 
+
+@partial(jax.vmap, in_axes=(None, 1))
+def compute_temporal_covariances(x0, xt):
+    return (x0[:,:,None] * xt[:,None,:]).mean(0)
+
+ts = np.arange(0, 1001, 50)
+
+for i, sample in enumerate(samples):
+    sample = sample.reshape((-1, 1024, 2))
+    cov_sample = compute_temporal_covariances(sample[:,0,:], sample)
+    cov_analytical = compute_ou_cov_diffusion_t(ddpm_params["alphas_bar"][ts[i]], delta_s, params)
+    fig, ax = plt.subplots(2, 2, sharex=True)
+    fig.set_size_inches(10,10)
+
+    ax[0,0].plot(cov_sample[:,0,0], label="simulation")
+    ax[0,0].plot(cov_analytical[0,:1024], label="theory")
+    ax[0,0].legend()
+
+    ax[0,1].plot(cov_sample[:,0,1])
+    ax[0,1].plot(cov_analytical[0,1024:])
+
+    ax[1,0].plot(cov_sample[:,1,0])
+    ax[1,0].plot(cov_analytical[1024,:1024])
+    
+    ax[1,1].plot(cov_sample[:,1,1])
+    ax[1,1].plot(cov_analytical[1024,1024:])
+    
+    ax[0,0].set_xlim(0, 50)
+    
+    fig.savefig(os.path.join("figures_reverse_process", f"reverse_process_step_{ts[i]}.png"))
+    plt.close()
 
 
