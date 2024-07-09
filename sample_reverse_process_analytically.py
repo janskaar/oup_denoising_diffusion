@@ -112,6 +112,7 @@ rng = jax.random.PRNGKey(123)
 rng, key = jax.random.split(rng)
 x_T = jax.random.normal(key, shape=(10000, 2048))
 samples = [x_T]
+cov_OU = compute_ou_covariance(delta_s, params)
 for i in reversed(range(1000)):
     tic = time.time()
 
@@ -119,7 +120,7 @@ for i in reversed(range(1000)):
     keys = jax.random.split(key, len(x_T))
 
     cov_t = compute_ou_cov_diffusion_t(ddpm_params["alphas_bar"][i], delta_s, params)
-    sample = forward_posterior_sample(keys, samples[-1], ddpm_params["alphas_bar"][i], ddpm_params["betas"][i], cov_t)
+    sample = forward_posterior_sample(keys, samples[-1], ddpm_params["alphas_bar"][i], ddpm_params["betas"][i], cov_OU)
     if ( i % 50 == 0 ):
         samples.append(sample)
     toc = time.time()
