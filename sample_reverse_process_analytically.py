@@ -102,26 +102,27 @@ def forward_posterior_sample(key, x_t, alpha_bar_t, beta_t, sigma_OU):
 
     chol_Sigma_inv = jnp.linalg.cholesky(Sigma_inv, upper=False)
     chol_Sigma = jsp.linalg.solve_triangular(chol_Sigma_inv, jnp.eye(n), lower=True)
-    Sigma = chol_Sigma.dot(chol_Sigma.T)
+    Sigma = chol_Sigma.T.dot(chol_Sigma)
     mu = np.sqrt(1 - beta_t) / beta_t * Sigma.dot(x_t)
 
-    sample = chol_Sigma.dot(jax.random.normal(key, shape=x_t.shape)) + mu
+    sample = mu + chol_Sigma.dot(jax.random.normal(key, shape=x_t.shape))
     return sample
 
 rng = jax.random.PRNGKey(123)
 rng, key = jax.random.split(rng)
-x_T = jax.random.normal(key, shape=(10000, 2048))
-samples = [x_T]
+# sample at step T
+sample = jax.random.normal(key, shape=(10000, 2048))
+samples = [sample]
 cov_OU = compute_ou_covariance(delta_s, params)
 for i in reversed(range(1000)):
     tic = time.time()
 
     rng, key = jax.random.split(rng)
-    keys = jax.random.split(key, len(x_T))
+    keys = jax.random.split(key, len(sample))
 
     cov_t = compute_ou_cov_diffusion_t(ddpm_params["alphas_bar"][i], delta_s, params)
-    sample = forward_posterior_sample(keys, samples[-1], ddpm_params["alphas_bar"][i], ddpm_params["betas"][i], cov_OU)
-    if ( i % 50 == 0 ):
+    sample = forward_posterior_sample(keys, sample, ddpm_params["alphas_bar"][i], ddpm_params["betas"][i], cov_OU)
+    if ( i % 100 == 0 ):
         samples.append(sample)
     toc = time.time()
     print(f"step {i}, {toc - tic:.1f} s")
@@ -148,7 +149,7 @@ with h5py.File("reverse_process_analytical_samples.h5", "r") as f:
 def compute_temporal_covariances(x0, xt):
     return (x0[:,:,None] * xt[:,None,:]).mean(0)
 
-ts = np.arange(0, 1001, 50)
+ts = list(range(0, 1000, 100)) + [999]
 
 for i, sample in enumerate(samples):
     sample = sample.reshape((-1, 1024, 2))
@@ -166,12 +167,12 @@ for i, sample in enumerate(samples):
 
     ax[1,0].plot(cov_sample[:,1,0])
     ax[1,0].plot(cov_analytical[1024,:1024])
-    
+
     ax[1,1].plot(cov_sample[:,1,1])
     ax[1,1].plot(cov_analytical[1024,1024:])
-    
+
     ax[0,0].set_xlim(0, 50)
-    
+
     fig.savefig(os.path.join("figures_reverse_process", f"reverse_process_step_{ts[i]}.png"))
     plt.close()
 
