@@ -12,7 +12,7 @@ from diffusion import get_ddpm_params
 from unet import UNET
 from default_config import config
 from sampling import ddpm_sample_step
-from diffusion import l2_loss, q_sample
+from diffusion import l2_loss, q_sample, simple_loss
 
 f = os.path.join("results_simple", "checkpoint")
 
@@ -123,21 +123,61 @@ rng, key = jax.random.split(rng)
 
 ##  
 
-losses = []
-for i in reversed(range(1000)):
-    print(i, end="\r")
-    rng, key = jax.random.split(rng)
-    loss, pred, x_t = loss_step(key, state, x_batch, i, ddpm_params)
-    losses.append(loss) 
-losses = np.array(losses)
-
-weighted_losses = losses / (
-    2
-    * ddpm_params["alphas"][:,None]
-    * (1 - ddpm_params["alphas_bar"])[:,None]
-)
+# losses = []
+# for i in reversed(range(1000)):
+#     print(i, end="\r")
+#     rng, key = jax.random.split(rng)
+#     loss, pred, x_t = loss_step(key, state, x_batch, i, ddpm_params)
+#     losses.append(loss) 
+# losses = np.array(losses)
+# 
+# weighted_losses = losses / (
+#     2
+#     * ddpm_params["alphas"][:,None]
+#     * (1 - ddpm_params["alphas_bar"])[:,None]
+# )
 
 ##
+
+
+def compute_loss_full_chain(rng, state, X, condition, ddpm_params):
+    """
+    Compute loss over all diffusion time steps.
+    """
+
+    t = jnp.tile(jnp.arange(1000)[::-1][:,None], (1, len(X)))
+
+    def loss_at_t(carry, t):
+        """
+        Carries only rng key, all other variables are static
+        """
+        print("Tracing loss_at_t")
+
+        rng, key = jax.random.split(carry["key"])
+        noise = jax.random.normal(carry["key"], X.shape)
+        x_t = q_sample(X, t, noise, ddpm_params)
+        pred = state.apply_fn({"params": state.params}, x_t, t, condition)
+
+        loss = l2_loss(
+            pred.reshape((pred.shape[0], -1)), noise.reshape((noise.shape[0], -1))
+        )
+
+        carry = {"key": rng}
+        return carry, loss.mean(-1)
+
+    carry = {"key": rng}
+    carry, losses = jax.lax.scan(loss_at_t, carry, xs=t)
+    return losses
+
+
+rng, key = jax.random.split(rng)
+losses = compute_loss_full_chain(key, state, x_batch, x_batch, ddpm_params)
+compute_loss_full_chain_jit = jax.jit(compute_loss_full_chain)
+losses = compute_loss_full_chain_jit(key, state, x_batch, x_batch, ddpm_params)
+
+
+##
+
 fig, ax = plt.subplots(1)
 phi = np.arctan(1080 / 1920)
 sz = (14 * np.cos(phi), 14 * np.sin(phi))
@@ -148,5 +188,5 @@ ax.plot(weighted_losses.mean(1), label="weighted loss")
 ax.set_ylim(0, 20)
 ax.legend()
 plt.show()
-fig.savefig("losses_simple.svg")
+# fig.savefig("losses_simple.svg")
 
