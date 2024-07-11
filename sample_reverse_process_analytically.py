@@ -93,19 +93,19 @@ delta_s = jnp.arange(1024)
 ##
 
 @partial(jax.vmap, in_axes=(0, 0, None, None, None))
-def forward_posterior_sample(key, x_t, alpha_bar_t, beta_t, sigma_OU):
+def forward_posterior_sample(key, x_t, alpha_bar_t, beta_tp1, sigma_OU):
     n = 2048
     sigma_q_t = 1 - alpha_bar_t
     t1_inverse = jnp.linalg.solve(alpha_bar_t * sigma_OU + sigma_q_t * jnp.eye(n), jnp.eye(n))
 
-    Sigma_inv = t1_inverse + (1 - beta_t) / beta_t * jnp.eye(n)
+    Sigma_inv = t1_inverse + (1 - beta_tp1) / beta_tp1 * jnp.eye(n)
 
     chol_Sigma_inv = jnp.linalg.cholesky(Sigma_inv, upper=False)
     chol_Sigma = jsp.linalg.solve_triangular(chol_Sigma_inv, jnp.eye(n), lower=True)
     Sigma = chol_Sigma.T.dot(chol_Sigma)
-    mu = np.sqrt(1 - beta_t) / beta_t * Sigma.dot(x_t)
+    mu = np.sqrt(1 - beta_tp1) / beta_tp1 * Sigma.dot(x_t)
 
-    sample = mu + chol_Sigma.dot(jax.random.normal(key, shape=x_t.shape))
+    sample = chol_Sigma.dot(jax.random.normal(key, shape=x_t.shape)) + mu
     return sample
 
 rng = jax.random.PRNGKey(123)
@@ -114,14 +114,13 @@ rng, key = jax.random.split(rng)
 sample = jax.random.normal(key, shape=(10000, 2048))
 samples = [sample]
 cov_OU = compute_ou_covariance(delta_s, params)
-for i in reversed(range(1000)):
+for i in reversed(range(999)):
     tic = time.time()
 
     rng, key = jax.random.split(rng)
     keys = jax.random.split(key, len(sample))
 
-    cov_t = compute_ou_cov_diffusion_t(ddpm_params["alphas_bar"][i], delta_s, params)
-    sample = forward_posterior_sample(keys, sample, ddpm_params["alphas_bar"][i], ddpm_params["betas"][i], cov_OU)
+    sample = forward_posterior_sample(keys, sample, ddpm_params["alphas_bar"][i], ddpm_params["betas"][i+1], cov_OU)
     if ( i % 100 == 0 ):
         samples.append(sample)
     toc = time.time()
