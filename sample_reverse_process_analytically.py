@@ -92,54 +92,54 @@ delta_s = jnp.arange(1024)
 
 ##
 
-# @partial(jax.vmap, in_axes=(0, 0, None, None, None))
-# def forward_posterior_sample(key, x_t, alpha_bar_t, beta_tp1, sigma_OU):
-#     n = 2048
-#     sigma_q_t = 1 - alpha_bar_t
-#     t1_inverse = jnp.linalg.solve(alpha_bar_t * sigma_OU + sigma_q_t * jnp.eye(n), jnp.eye(n))
-# 
-#     Sigma_inv = t1_inverse + (1 - beta_tp1) / beta_tp1 * jnp.eye(n)
-# 
-#     chol_Sigma_inv = jnp.linalg.cholesky(Sigma_inv, upper=False)
-#     chol_Sigma = jsp.linalg.solve_triangular(chol_Sigma_inv, jnp.eye(n), lower=True)
-#     Sigma = chol_Sigma.T.dot(chol_Sigma)
-#     mu = np.sqrt(1 - beta_tp1) / beta_tp1 * Sigma.dot(x_t)
-# 
-#     sample = chol_Sigma.dot(jax.random.normal(key, shape=x_t.shape)) + mu
-#     return sample
-# 
-# rng = jax.random.PRNGKey(123)
-# rng, key = jax.random.split(rng)
-# # sample at step T
-# sample = jax.random.normal(key, shape=(10000, 2048))
-# samples = [sample]
-# cov_OU = compute_ou_covariance(delta_s, params)
-# for i in reversed(range(999)):
-#     tic = time.time()
-# 
-#     rng, key = jax.random.split(rng)
-#     keys = jax.random.split(key, len(sample))
-# 
-#     sample = forward_posterior_sample(keys, sample, ddpm_params["alphas_bar"][i], ddpm_params["betas"][i+1], cov_OU)
-#     if ( i % 100 == 0 ):
-#         samples.append(sample)
-#     toc = time.time()
-#     print(f"step {i}, {toc - tic:.1f} s")
-# 
-# samples = np.array(samples)
-# 
-# with h5py.File("reverse_process_analytical_samples.h5", "a") as f:
-#     f.create_dataset("samples", data=samples)
-# 
-#     f.attrs["sigma_noise"] = 5.
-#     f.attrs["tau_x"] = 4.
-#     f.attrs["tau_y"] = 5.
-#     f.attrs["C"] = 50.
+@partial(jax.vmap, in_axes=(0, 0, None, None, None))
+def forward_posterior_sample(key, x_t, alpha_bar_t, beta_tp1, sigma_OU):
+    n = 2048
+    sigma_q_t = 1 - alpha_bar_t
+    t1_inverse = jnp.linalg.solve(alpha_bar_t * sigma_OU + sigma_q_t * jnp.eye(n), jnp.eye(n))
+
+    Sigma_inv = t1_inverse + (1 - beta_tp1) / beta_tp1 * jnp.eye(n)
+
+    chol_Sigma_inv = jnp.linalg.cholesky(Sigma_inv, upper=False)
+    chol_Sigma = jsp.linalg.solve_triangular(chol_Sigma_inv, jnp.eye(n), lower=True)
+    Sigma = chol_Sigma.T.dot(chol_Sigma)
+    mu = np.sqrt(1 - beta_tp1) / beta_tp1 * Sigma.dot(x_t)
+
+    sample = chol_Sigma.dot(jax.random.normal(key, shape=x_t.shape)) + mu
+    return sample
+
+rng = jax.random.PRNGKey(123)
+rng, key = jax.random.split(rng)
+# sample at step T
+sample = jax.random.normal(key, shape=(10000, 2048))
+samples = [sample]
+cov_OU = compute_ou_covariance(delta_s, params)
+for i in reversed(range(999)):
+    tic = time.time()
+
+    rng, key = jax.random.split(rng)
+    keys = jax.random.split(key, len(sample))
+
+    sample = forward_posterior_sample(keys, sample, ddpm_params["alphas_bar"][i], ddpm_params["betas"][i+1], cov_OU)
+    if ( i % 100 == 0 ):
+        samples.append(sample)
+    toc = time.time()
+    print(f"step {i}, {toc - tic:.1f} s")
+
+samples = np.array(samples)
+
+with h5py.File("reverse_process_analytical_samples.h5", "a") as f:
+    f.create_dataset("samples", data=samples)
+
+    f.attrs["sigma_noise"] = 5.
+    f.attrs["tau_x"] = 4.
+    f.attrs["tau_y"] = 5.
+    f.attrs["C"] = 50.
 
 ## 
 
-with h5py.File("reverse_process_analytical_samples.h5", "r") as f:
-    samples = f["samples"][()]
+# with h5py.File("reverse_process_analytical_samples.h5", "r") as f:
+#     samples = f["samples"][()]
 
 
 ## 
