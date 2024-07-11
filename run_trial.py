@@ -79,7 +79,7 @@ def train_and_save(config, sim_index):
                 subgrp.attrs[key_outer] = config_inner
 
 default_config.optim.use_full_loss = False
-outfile = f"results/results_simple_loss_32_16.h5"
+outdir = "results_simple_loss_32_32"
 
 num_samples = 10
 
@@ -101,5 +101,7 @@ for i, lr in enumerate(learning_rates):
     config.data.batch_size = batch_size
     config.optim.learning_rate = lr
     config.seed = np.random.randint(2 ** 32)
+    config.training.eval_file = os.path.join(outdir, f"run_{i}.h5")
+    config.training.checkpoint_dir = os.path.join(outdir, f"checkpoint_{i}")
     train_and_save(config, i)
 

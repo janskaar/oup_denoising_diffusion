@@ -388,6 +388,8 @@ def train(config):
             ckpt = {'model': state, 'config': config}
             orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
             save_args = orbax_utils.save_args_from_target(ckpt)
+            if not os.path.isdir(config.training.checkpoint_dir):
+                os.mkdir(config.training.checkpoint_dir)
             orbax_checkpointer.save(config.training.checkpoint_dir, ckpt, save_args=save_args)
 
 
