@@ -99,15 +99,19 @@ def compute_sample_temporal_covariance(x0, xt):
     return (x0[:,:,None] * xt[:,None,:]).mean(0)
 
 
-@partial(jax.vmap, in_axes=(0, 0, None, None, None))
-def sample_forward_posterior(key, x_t, alpha_bar_t, beta_t, sigma_OU):
+@partial(jax.vmap, in_axes=(0, 0, 0, None, None))
+def sample_forward_posterior(key, x_t, t, sigma_OU, ddpm_params):
     """
     Sample the posterior forward process q(x_(t-1) | x_t, theta), where theta
     are the parameters of the O-U process x_0. sigma_OU is the covariance of x_0.
     """
     n = 2048
-    sigma_q_t = 1 - alpha_bar_t
-    t1_inverse = jnp.linalg.solve(alpha_bar_t * sigma_OU + sigma_q_t * jnp.eye(n), jnp.eye(n))
+    sigma_q_tm1 = 1 - ddpm_params["alphas_bar"][t-1]
+    alpha_bar_tm1 = ddpm_params["alphas_bar"][t-1]
+    beta_t = ddpm_params["betas"][t]
+
+    sigma_q_tm1 = 1 - alpha_bar_tm1
+    t1_inverse = jnp.linalg.solve(alpha_bar_tm1 * sigma_OU + sigma_q_tm1 * jnp.eye(n), jnp.eye(n))
 
     Sigma_inv = t1_inverse + (1 - beta_t) / beta_t * jnp.eye(n)
 
@@ -119,4 +123,37 @@ def sample_forward_posterior(key, x_t, alpha_bar_t, beta_t, sigma_OU):
     sample = chol_Sigma.dot(jax.random.normal(key, shape=x_t.shape)) + mu
     return sample
 
+@partial(jax.vmap, in_axes=(0, None, None, None))
+def compute_params_forward_posterior(x_t, t, sigma_OU, ddpm_params):#alpha_bar_t, beta_t, sigma_OU):
+    """
+    Compute the parameters mu and Sigma of the the posterior forward process distribution 
+    q(x_(t-1) | x_t, theta), where theta are the parameters of the O-U process x_0.
+    sigma_OU is the covariance of x_0.
+    """
+    n = 2048
+    sigma_q_tm1 = 1 - ddpm_params["alphas_bar"][t-1]
+    alpha_bar_tm1 = ddpm_params["alphas_bar"][t-1]
+    beta_t = ddpm_params["betas"][t]
+    t1_inverse = jnp.linalg.solve(alpha_bar_tm1 * sigma_OU + sigma_q_tm1 * jnp.eye(n), jnp.eye(n))
+
+    Sigma_inv = t1_inverse + (1 - beta_t) / beta_t * jnp.eye(n)
+
+    chol_Sigma_inv = jnp.linalg.cholesky(Sigma_inv, upper=False)
+    chol_Sigma = jsp.linalg.solve_triangular(chol_Sigma_inv, jnp.eye(n), lower=True)
+    Sigma = chol_Sigma.dot(chol_Sigma.T)
+    mu = jnp.sqrt(1 - beta_t) / beta_t * Sigma.dot(x_t)
+
+    return mu, Sigma
+
+@partial(jax.vmap, in_axes=(0, 0, None, None))
+def compute_params_forward_conditional_posterior(x_0, x_t, t, ddpm_params):
+    alpha_bar_tm1 = ddpm_params["alphas_bar"][t-1]
+    alpha_bar_t = ddpm_params["alphas_bar"][t]
+    beta_t = ddpm_params["betas"][t]
+
+    at = 1 - alpha_bar_t
+    atm1 = 1 - alpha_bar_tm1
+    mu_tilde = ( jnp.sqrt(alpha_bar_tm1) * beta_t ) / at * x_0 + ( jnp.sqrt(alpha_bar_t) * (1 - alpha_bar_tm1) ) / at * x_t
+    Sigma_tilde = ( atm1 / at ) * beta_t * np.eye(2048)
+    return mu_tilde, Sigma_tilde
 
