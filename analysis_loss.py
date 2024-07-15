@@ -253,7 +253,7 @@ def compute_unconditional_kl_full_chain(rng, state, X, condition, sigma_OU, ddpm
         x_t = q_sample(X, t, noise, ddpm_params)
         pred = state.apply_fn({"params": state.params}, x_t, t + np.zeros(num_samples, dtype=np.int32), condition)
 
-        x_t_flat = x_t.reshape((-1, 2048))
+        x_t_flat = x_t.transpose(0,2,1).reshape((-1, 2048))
         mu_q, Sigma_q = compute_params_forward_posterior(x_t_flat, t, sigma_OU, ddpm_params)
 
         mu_phi = (1 / jnp.sqrt(ddpm_params["alphas"][t])) * (
@@ -268,8 +268,8 @@ def compute_unconditional_kl_full_chain(rng, state, X, condition, sigma_OU, ddpm
         return carry, kl
 
     carry = {"key": rng}
-    carry, ys = kl_at_t(carry, t[0])
-#    carry, ys = jax.lax.scan(kl_at_t, carry, xs=t)
+#    carry, ys = kl_at_t(carry, t[0])
+    carry, ys = jax.lax.scan(kl_at_t, carry, xs=t)
     return ys
 
 
@@ -292,8 +292,10 @@ def compute_conditional_kl_full_chain(rng, state, X, condition, ddpm_params):
         x_t = q_sample(X, t, noise, ddpm_params)
         pred = state.apply_fn({"params": state.params}, x_t, t + np.zeros(num_samples, dtype=np.int32), condition)
 
-        x_t_flat = x_t.reshape((-1, 2048))
-        mu_tilde, Sigma_tilde = compute_params_forward_conditional_posterior(X.reshape((-1, 2048)), x_t_flat, t, ddpm_params)
+        x_flat = X.transpose(0,2,1).reshape((-1, 2048))
+        x_t_flat = x_t.transpose(0,2,1).reshape((-1, 2048))
+
+        mu_tilde, Sigma_tilde = compute_params_forward_conditional_posterior(x_flat, x_t_flat, t, ddpm_params)
 
         mu_phi = (1 / jnp.sqrt(ddpm_params["alphas"][t])) * (
                 x_t - ddpm_params["betas"][t] / ddpm_params["sqrt_1m_alphas_bar"][t] * pred
@@ -307,13 +309,9 @@ def compute_conditional_kl_full_chain(rng, state, X, condition, ddpm_params):
         return carry, kl
 
     carry = {"key": rng}
-    carry, ys = kl_at_t(carry, t[0])
-#    carry, ys = jax.lax.scan(kl_at_t, carry, xs=t)
+#    carry, ys = kl_at_t(carry, t[0])
+    carry, ys = jax.lax.scan(kl_at_t, carry, xs=t)
     return ys
-
-
-
-
 
 
 ou_params = SimulationParameters(
@@ -331,28 +329,29 @@ kls_conditional = compute_conditional_kl_full_chain(key, state, x_batch, x_batch
 
 
 ## Debugging
-x = x_batch
-x_flat = x.transpose(0,2,1).reshape(-1, 2048)
-condition = x_batch
-num_samples = len(x)
-t = 950
-rng, key = jax.random.split(rng)
-noise = jax.random.normal(key, x.shape)
-x_t = q_sample(x, t, noise, ddpm_params)
-pred = state.apply_fn({"params": state.params}, x_t, t + np.zeros(num_samples, dtype=np.int32), condition)
 
-x_t_flat = x_t.transpose(0,2,1).reshape((-1, 2048))
-mu_tilde, Sigma_tilde = compute_params_forward_conditional_posterior(x_flat, x_t_flat, t, ddpm_params)
-mu_q, Sigma_q = compute_params_forward_posterior(x_t_flat, t, sigma_OU, ddpm_params)
-
-mu_phi = (1 / jnp.sqrt(ddpm_params["alphas"][t])) * (
-        x_t - ddpm_params["betas"][t] / ddpm_params["sqrt_1m_alphas_bar"][t] * pred
-).transpose(0,2,1).reshape((-1,2048))
-
-Sigma_phi = ddpm_params["betas"][t] * jnp.tile(jnp.eye(2048)[None], (num_samples, 1, 1))
-
-kl_cond = KL_mvn(mu_tilde, Sigma_tilde, mu_phi, Sigma_phi)
-kl_uncond = KL_mvn(mu_q, Sigma_q, mu_phi, Sigma_phi)
+# x = x_batch
+# x_flat = x.transpose(0,2,1).reshape(-1, 2048)
+# condition = x_batch
+# num_samples = len(x)
+# t = 950
+# rng, key = jax.random.split(rng)
+# noise = jax.random.normal(key, x.shape)
+# x_t = q_sample(x, t, noise, ddpm_params)
+# pred = state.apply_fn({"params": state.params}, x_t, t + np.zeros(num_samples, dtype=np.int32), condition)
+# 
+# x_t_flat = x_t.transpose(0,2,1).reshape((-1, 2048))
+# mu_tilde, Sigma_tilde = compute_params_forward_conditional_posterior(x_flat, x_t_flat, t, ddpm_params)
+# mu_q, Sigma_q = compute_params_forward_posterior(x_t_flat, t, sigma_OU, ddpm_params)
+# 
+# mu_phi = (1 / jnp.sqrt(ddpm_params["alphas"][t])) * (
+#         x_t - ddpm_params["betas"][t] / ddpm_params["sqrt_1m_alphas_bar"][t] * pred
+# ).transpose(0,2,1).reshape((-1,2048))
+# 
+# Sigma_phi = ddpm_params["betas"][t] * jnp.tile(jnp.eye(2048)[None], (num_samples, 1, 1))
+# 
+# kl_cond = KL_mvn(mu_tilde, Sigma_tilde, mu_phi, Sigma_phi)
+# kl_uncond = KL_mvn(mu_q, Sigma_q, mu_phi, Sigma_phi)
 
 
 
