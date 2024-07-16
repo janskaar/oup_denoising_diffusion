@@ -105,7 +105,7 @@ def simple_loss(params, state, inp, noise):
     return loss.mean()
 
 
-def full_loss(params, state, inp, noise):
+def full_loss(params, state, inp, noise, ddpm_params):
     x_t, condition, batched_t = inp
     pred = state.apply_fn({"params": params}, x_t, batched_t, condition)
 
@@ -128,7 +128,7 @@ def compute_loss_full_chain(rng, state, X, condition, ddpm_params):
     Jit this function in order to avoid re-compiling inner loss function.
     """
 
-    t = jnp.tile(jnp.arange(1000)[::-1][:, None], (1, len(X)))
+    t = jnp.tile(jnp.arange(1000)[:, None], (1, len(X)))
 
     def loss_at_t(carry, t):
         """
@@ -269,15 +269,47 @@ def norm_data(X, Theta):
     return X, Theta
 
 
-def run_to_file(fn, fconfig, step, *args):
-    results = fn(*args)
-    with h5py.File(fconfig["file"], "a") as f:
-        grp = f"{step}"
-        if grp in f:
-            group = f[grp]
+def attrs_to_file(fname, groupname, attrs):
+    """
+    Save attributes to file ´filename´ in group ´groupname´
+    Assume attrs to be a dictionary, and to be a have at
+    most 1 level of nesting.
+    """
+
+    with h5py.File(fname, "a") as f:
+        if groupname in f:
+            group = f[groupname]
         else:
-            group = f.create_group(grp)
-        group.create_dataset(fconfig["name"], data=np.asarray(results))
+            group = f.create_group(groupname)
+
+        for key_outer in attrs.keys():
+            config_inner = attrs[key_outer]
+            if hasattr(config_inner, "keys"): # if it's another dict, loop through the keys
+                for key_inner in config_inner.keys():
+                    group.attrs[key_outer + "." + key_inner] = config_inner[key_inner]
+            else:
+                group.attrs[key_outer] = config_inner
+
+
+def array_to_file(fname, groupname, dataname, array):
+    """
+    Save array to file ´filename´ in group ´groupname´ with name ´dataname´
+    """
+    with h5py.File(fname, "a") as f:
+        if groupname is None:
+            group = f
+        else:
+            if groupname in f:
+                group = f[groupname]
+            else:
+                group = f.create_group(groupname)
+        group.create_dataset(dataname, data=array)
+
+
+def run_to_file(fn, fname, dataname, step, *args):
+    results = fn(*args)
+    grp = f"{step}"
+    array_to_file(fname, grp, dataname, results)
 
 
 def train(config):
@@ -302,8 +334,8 @@ def train(config):
     state = create_train_state(state_rng, config)
 
     ## Jit and partial
-    loss_fn = full_loss if config.training.use_full_loss else simple_loss
     ddpm_params = get_ddpm_params(config.ddpm)
+    loss_fn = partial(full_loss, ddpm_params=ddpm_params) if config.training.use_full_loss else simple_loss
     train_step_jit = partial(train_step, ddpm_params=ddpm_params, loss_fn=loss_fn)
     train_step_jit = jax.jit(train_step_jit)
 
@@ -322,40 +354,42 @@ def train(config):
         timesteps=config.ddpm.timesteps,
     )
 
-    ## Specify where to save periodic training evals
-    fconfig_full_chain_loss = {
-        "file": config.training.eval_file,
-        "name": "full_chain_loss",
-    }
 
-    fconfig_samples = {
-        "file": config.training.eval_file,
-        "name": "samples",
-    }
+    # Save conditional values for sampling to file
+    array_to_file(config.training.eval_file, None, "conditions", X_fp)
+    attrs_to_file(config.training.eval_file, "config", config)
+
 
     ## Init helper vars and training loop
     step = 0
 
     start_time = time.time()
 
-    # for plotting loss
-    loss_history = []
-    time_history = []
+
+    # Log initial losses        
+    rng, key = jax.random.split(rng)
+    run_to_file(
+        compute_loss_full_chain_jit,
+        config.training.eval_file,
+        "full_chain_loss",
+        step,
+        key,
+        state,
+    )
+
+    # Training loop
     break_flag = False
     eval_flag = False
     while True:
         rng, key = jax.random.split(rng)
         train_iter = train_gen(key)
-
         for batch in train_iter:
             tic = time.time()
             print(step, end="\r", flush=True)
             rng, train_step_rng = jax.random.split(rng, 2)
             condition = batch[0] if config.model.use_encoder else batch[1]
             state, metrics = train_step_jit(train_step_rng, state, batch[0], condition)
-            loss_history.append(metrics["loss"])
             toc = time.time()
-            time_history.append(toc - tic)
             step += 1
             if step > config.training.num_train_steps:
                 break_flag = True
@@ -369,7 +403,8 @@ def train(config):
             rng, key = jax.random.split(rng)
             run_to_file(
                 compute_loss_full_chain_jit,
-                fconfig_full_chain_loss,
+                config.training.eval_file,
+                "full_chain_loss",
                 step,
                 key,
                 state,
@@ -378,20 +413,18 @@ def train(config):
             rng, key = jax.random.split(rng)
             run_to_file(
                 sample_loop_partial,
-                fconfig_samples,
+                config.training.eval_file,
+                "samples",
                 step,
                 key,
                 state,
             )
+            eval_flag = False
 
         if break_flag:
             ckpt = {'model': state, 'config': config}
             orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
             save_args = orbax_utils.save_args_from_target(ckpt)
-            if not os.path.isdir(config.training.checkpoint_dir):
-                os.mkdir(config.training.checkpoint_dir)
             orbax_checkpointer.save(config.training.checkpoint_dir, ckpt, save_args=save_args)
-
-
             break
 
