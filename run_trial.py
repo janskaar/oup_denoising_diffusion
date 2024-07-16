@@ -7,6 +7,7 @@ import numpy as np
 from scipy.signal import welch
 from scipy.stats.qmc import Halton
 import os, time, h5py, re
+from pathlib import Path
 from functools import partial
 import matplotlib.pyplot as plt
 from default_config import config as default_config
@@ -16,6 +17,7 @@ if "SLURM_PROCID" in os.environ:
 else:
     base_seed = int(time.time())
 
+path = Path(__file__).parent
 print("base seed: ", base_seed, flush=True)
 
 np.random.seed(base_seed)
@@ -48,38 +50,38 @@ sample_step = jax.jit(sample_step)
 sample_shape = (len(X_fp), 1024, 2)
 condition = X_fp[:, 1024:2048]
 
-def train_and_save(config, sim_index):
-    tic = time.time()
-    metrics, state = train(config, X, Theta)
-    toc = time.time()
+# def train_and_save(config, sim_index):
+#     tic = time.time()
+#     metrics, state = train(config, X, Theta)
+#     toc = time.time()
+# 
+#     print(f"Trained in {toc - tic:.1f} seconds", flush=True)
+# 
+#     rng = jax.random.PRNGKey(config.seed)
+#     rng, key = jax.random.split(rng)
+#     sample = sample_loop(
+#         key, state, sample_shape, condition, sample_step, config.ddpm.timesteps
+#     )
+# 
+# 
+#     with h5py.File(outfile, "a") as f:
+#         grp = f.create_group(f"{sim_index:02d}")
+#         grp.create_dataset("sample", data=sample)
+#         grp.create_dataset("condition", data=condition)
+#         grp.create_dataset("loss", data=metrics["loss"])
+#         grp.create_dataset("time", data=metrics["step_time"])
+# 
+#         subgrp = grp.create_group("config")
+#         for key_outer in config.keys():
+#             config_inner = config[key_outer]
+#             if hasattr(config_inner, "keys"): # if it's another dict, loop through the keys
+#                 for key_inner in config_inner.keys():
+#                     subgrp.attrs[key_outer + "." + key_inner] = config_inner[key_inner]
+#             else:
+#                 subgrp.attrs[key_outer] = config_inner
 
-    print(f"Trained in {toc - tic:.1f} seconds", flush=True)
-
-    rng = jax.random.PRNGKey(config.seed)
-    rng, key = jax.random.split(rng)
-    sample = sample_loop(
-        key, state, sample_shape, condition, sample_step, config.ddpm.timesteps
-    )
-
-
-    with h5py.File(outfile, "a") as f:
-        grp = f.create_group(f"{sim_index:02d}")
-        grp.create_dataset("sample", data=sample)
-        grp.create_dataset("condition", data=condition)
-        grp.create_dataset("loss", data=metrics["loss"])
-        grp.create_dataset("time", data=metrics["step_time"])
-
-        subgrp = grp.create_group("config")
-        for key_outer in config.keys():
-            config_inner = config[key_outer]
-            if hasattr(config_inner, "keys"): # if it's another dict, loop through the keys
-                for key_inner in config_inner.keys():
-                    subgrp.attrs[key_outer + "." + key_inner] = config_inner[key_inner]
-            else:
-                subgrp.attrs[key_outer] = config_inner
-
-default_config.optim.use_full_loss = False
-outdir = "results_simple_loss_32_32"
+default_config.training.use_full_loss = True
+outdir = os.path.join(path, "results_full_loss_32_16")
 
 num_samples = 10
 
@@ -103,5 +105,7 @@ for i, lr in enumerate(learning_rates):
     config.seed = np.random.randint(2 ** 32)
     config.training.eval_file = os.path.join(outdir, f"run_{i}.h5")
     config.training.checkpoint_dir = os.path.join(outdir, f"checkpoint_{i}")
-    train_and_save(config, i)
+    config.training.num_train_steps = 5000
+    config.training.num_warmup_steps = 500
+    train(config)
 
