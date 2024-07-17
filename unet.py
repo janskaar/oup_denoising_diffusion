@@ -145,6 +145,7 @@ class ResidualBlock(nn.Module):
 
     filters: int
     activation: Callable
+    param_embedding : bool
 
     @nn.compact
     def __call__(self, x, time_emb, param_emb):
@@ -161,18 +162,20 @@ class ResidualBlock(nn.Module):
         )  # [B, 2T], T is time embedding dim
         time_emb = time_emb[:, None, :]  # [B, 1, 2T]  # broadcast over signal dim
 
-        param_emb = nn.Dense(
-            features=2 * self.filters, name="param_embedding_mlp.dense_0"
-        )(
-            nn.silu(param_emb)
-        )  # [B, 2T], T is time embedding dim
-        param_emb = param_emb[:, None, :]  # [B, 1, 2T]  # broadcast over signal dim
-
         time_scale, time_shift = jnp.split(time_emb, 2, axis=-1)  # [B, 1, T]
         y = y * (1 + time_scale) + time_shift
 
-        param_scale, param_shift = jnp.split(param_emb, 2, axis=-1)  # [B, 1, T]
-        y = y * (1 + param_scale) + param_shift
+        if self.param_embedding:
+            param_emb = nn.Dense(
+                features=2 * self.filters, name="param_embedding_mlp.dense_0"
+            )(
+                nn.silu(param_emb)
+            )  # [B, 2T], T is time embedding dim
+            param_emb = param_emb[:, None, :]  # [B, 1, 2T]  # broadcast over signal dim
+
+
+            param_scale, param_shift = jnp.split(param_emb, 2, axis=-1)  # [B, 1, T]
+            y = y * (1 + param_scale) + param_shift
 
         y = nn.Conv(self.filters, kernel_size=(3,), strides=1, padding="SAME")(y)
         y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
@@ -216,6 +219,7 @@ class UNET(nn.Module):
     attention: bool
 
     use_encoder: bool
+    use_parameters : bool
 
     @nn.compact
     def __call__(self, x, t, z):
@@ -236,10 +240,12 @@ class UNET(nn.Module):
                 activation=self.activation,
                 attention=self.attention,
             )(z)
-        else:
+        elif self.use_parameters:
             param_emb = nn.Dense(features=time_dim, name="param_mlp.dense_0")(z)
             param_emb = nn.gelu(param_emb)
             param_emb = nn.Dense(features=time_dim, name="param_mlp.dense_1")(param_emb)
+
+        z_conditioning = self.use_encoder or self.use_parameters
 
         x = nn.Conv(
             features=self.start_filters * self.filter_mults[0],
@@ -254,6 +260,7 @@ class UNET(nn.Module):
             x = ResidualBlock(
                 filters=self.start_filters * mult,
                 activation=self.activation,
+                param_embedding=z_conditioning,
                 name=f"down_{i}_0",
             )(x, time_emb, param_emb)
             xs.append(x)
@@ -261,6 +268,7 @@ class UNET(nn.Module):
             x = ResidualBlock(
                 filters=self.start_filters * mult,
                 activation=self.activation,
+                param_embedding=z_conditioning,
                 name=f"down_{i}_1",
             )(x, time_emb, param_emb)
             if self.attention:
@@ -277,6 +285,7 @@ class UNET(nn.Module):
         x = ResidualBlock(
             filters=self.start_filters * self.filter_mults[-1],
             activation=self.activation,
+            param_embedding=z_conditioning,
             name="middle_0",
         )(x, time_emb, param_emb)
         if self.attention:
@@ -284,6 +293,7 @@ class UNET(nn.Module):
         x = ResidualBlock(
             filters=self.start_filters * self.filter_mults[-1],
             activation=self.activation,
+            param_embedding=z_conditioning,
             name="middle_1",
         )(x, time_emb, param_emb)
 
@@ -292,12 +302,14 @@ class UNET(nn.Module):
             x = ResidualBlock(
                 filters=self.start_filters * mult,
                 activation=self.activation,
+                param_embedding=z_conditioning,
                 name=f"up_{i}_0",
             )(jnp.concatenate((xs.pop(), x), axis=-1), time_emb, param_emb)
 
             x = ResidualBlock(
                 filters=self.start_filters * mult,
                 activation=self.activation,
+                param_embedding=z_conditioning,
                 name=f"up_{i}_1",
             )(jnp.concatenate((xs.pop(), x), axis=-1), time_emb, param_emb)
             if self.attention:
@@ -307,7 +319,10 @@ class UNET(nn.Module):
                 x = Upsample(self.start_filters * mult // 2, name=f"upsample_{i}")(x)
 
         x = ResidualBlock(
-            filters=self.out_channels, activation=self.activation, name="final_resblock"
+            filters=self.out_channels,
+            activation=self.activation, 
+            param_embedding=z_conditioning,
+            name="final_resblock"
         )(x, time_emb, param_emb)
 
         return x

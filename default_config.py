@@ -32,6 +32,7 @@ data.Theta_fixed_points_path = os.path.join("data", "theta_fixed_points.npy")
 # model
 config.model = model = ml_collections.ConfigDict()
 model.use_encoder = True
+model.use_parameters = False
 model.start_filters = 16
 model.filter_mults = (1, 2, 4, 8)
 model.encoder_start_filters = 16

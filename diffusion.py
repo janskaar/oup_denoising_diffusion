@@ -172,6 +172,7 @@ def create_train_state(rng, config: ml_collections.ConfigDict):
         encoder_filter_mults=config.model.encoder_filter_mults,
         encoder_latent_dim=config.model.encoder_latent_dim,
         use_encoder=config.model.use_encoder,
+        use_parameters=config.model.use_parameters,
         attention=config.model.use_attention,
     )
 
