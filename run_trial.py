@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from default_config import config as default_config
 
 if "SLURM_PROCID" in os.environ:
-    base_seed = int(os.environ["SLURM_PROCID"])
+    base_seed = int(os.environ["SLURM_JOB_ID"])
 else:
     base_seed = int(time.time())
 
