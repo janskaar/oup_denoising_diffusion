@@ -244,6 +244,8 @@ class UNET(nn.Module):
             param_emb = nn.Dense(features=time_dim, name="param_mlp.dense_0")(z)
             param_emb = nn.gelu(param_emb)
             param_emb = nn.Dense(features=time_dim, name="param_mlp.dense_1")(param_emb)
+        else:
+            param_emb = None
 
         z_conditioning = self.use_encoder or self.use_parameters
 
