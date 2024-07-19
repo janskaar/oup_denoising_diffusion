@@ -42,116 +42,19 @@ class SinusoidalPosEmb(nn.Module):
         return emb
 
 
-class Attention(nn.Module):
-    heads: int = 4
-    dim_head: int = 32
-    scale: int = 10
-
-    @nn.compact
-    def __call__(self, x):
-        B, N, C = x.shape  # B is batch, N is length of time series, C num channels
-        dim = self.dim_head * self.heads
-
-        qkv = nn.Conv(
-            features=dim * 3, kernel_size=(1,), use_bias=False, name="to_qkv.conv_0"
-        )(
-            x
-        )  # [B, N, dim *3]
-        q, k, v = jnp.split(qkv, 3, axis=-1)  # [B, N, dim]
-        q, k, v = map(
-            lambda t: rearrange(t, "b n (h d) -> b n h d", h=self.heads), (q, k, v)
-        )  # h = num heads,
-        # d = head dim
-        assert q.shape == k.shape == v.shape == (B, N, self.heads, self.dim_head)
-
-        q, k = map(l2norm, (q, k))
-
-        sim = (
-            jnp.einsum("b i h d, b j h d -> b h i j", q, k) * self.scale
-        )  # (B, h, N, N)
-        attn = nn.softmax(sim, axis=-1)  # (B, h, N, N)
-        assert attn.shape == (B, self.heads, N, N)
-
-        out = jnp.einsum("b h i j , b j h d  -> b h i d", attn, v)  # (B, h, N, d)
-        out = rearrange(out, "b h x d -> b x (h d)")  # (B, N, h * d)
-        assert out.shape == (B, N, dim)
-
-        out = nn.Conv(features=C, kernel_size=(1,), name="to_out.conv_0")(
-            out
-        )  # (B, N, C)
-        return out
-
-
-class LinearAttention(nn.Module):
-    heads: int = 4
-    dim_head: int = 32
-
-    @nn.compact
-    def __call__(self, x):
-        B, N, C = x.shape  # B is batch, N is length of time series, C num channels
-        dim = self.dim_head * self.heads
-
-        qkv = nn.Conv(
-            features=dim * 3, kernel_size=(1,), use_bias=False, name="to_qkv.conv_0"
-        )(
-            x
-        )  # [B, N, dim *3]
-        q, k, v = jnp.split(qkv, 3, axis=-1)  # [B, N, dim]
-        q, k, v = map(
-            lambda t: rearrange(t, "b n (h d) -> b n h d", h=self.heads), (q, k, v)
-        )  # h = num heads,
-        # d = head dim
-
-        assert q.shape == k.shape == v.shape == (B, N, self.heads, self.dim_head)
-        # compute softmax for q along its embedding dimensions
-        q = nn.softmax(q, axis=-1)
-        # compute softmax for k along its spatial dimensions
-        k = nn.softmax(k, axis=-3)
-
-        q = q / jnp.sqrt(self.dim_head)
-        v = v / N
-
-        context = jnp.einsum("b n h d, b n h e -> b h d e", k, v)
-        out = jnp.einsum("b h d e, b n h d -> b h e n", context, q)
-        out = rearrange(out, "b h e n -> b n (h e)")
-        assert out.shape == (B, N, dim)
-
-        out = nn.Conv(features=C, kernel_size=(1,), name="to_out.conv_0")(out)
-        out = nn.LayerNorm(
-            epsilon=1e-5, use_bias=False, dtype=jnp.float32, name="to_out.norm_0"
-        )(out)
-        return out
-
-
-class AttnBlock(nn.Module):
-    heads: int = 4
-    dim_head: int = 32
-    use_linear_attention: bool = True
-
-    @nn.compact
-    def __call__(self, x):
-        B, W, C = x.shape
-        normed_x = nn.LayerNorm(epsilon=1e-5, use_bias=False, dtype=jnp.float32)(x)
-        if self.use_linear_attention:
-            attn = LinearAttention(self.heads, self.dim_head)
-        else:
-            attn = Attention(self.heads, self.dim_head)
-        out = attn(normed_x)
-        assert out.shape == (B, W, C)
-        return out + x
-
-
 class ResidualBlock(nn.Module):
 
     filters: int
     activation: Callable
     param_embedding : bool
+    normalization : bool
 
     @nn.compact
     def __call__(self, x, time_emb, param_emb):
 
         y = nn.Conv(self.filters, kernel_size=(3,), strides=1, padding="SAME")(x)
-        y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
+        if self.normalization:
+            y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
         y = self.activation(y)
 
         # add in time and param embedding
@@ -178,7 +81,8 @@ class ResidualBlock(nn.Module):
             y = y * (1 + param_scale) + param_shift
 
         y = nn.Conv(self.filters, kernel_size=(3,), strides=1, padding="SAME")(y)
-        y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
+        if self.normalization:
+            y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
 
         # restore channel dimension for ups
         if x.shape[-1] != self.filters:
@@ -216,7 +120,7 @@ class UNET(nn.Module):
     encoder_start_filters: int
     encoder_filter_mults: Sequence[int]
     encoder_latent_dim: int
-    attention: bool
+    normalization : bool
 
     use_encoder: bool
     use_parameters : bool
@@ -238,7 +142,6 @@ class UNET(nn.Module):
                 filter_mults=self.encoder_filter_mults,
                 latent_dim=self.encoder_latent_dim,
                 activation=self.activation,
-                attention=self.attention,
             )(z)
         elif self.use_parameters:
             param_emb = nn.Dense(features=time_dim, name="param_mlp.dense_0")(z)
@@ -263,6 +166,7 @@ class UNET(nn.Module):
                 filters=self.start_filters * mult,
                 activation=self.activation,
                 param_embedding=z_conditioning,
+                normalization=self.normalization,
                 name=f"down_{i}_0",
             )(x, time_emb, param_emb)
             xs.append(x)
@@ -271,10 +175,9 @@ class UNET(nn.Module):
                 filters=self.start_filters * mult,
                 activation=self.activation,
                 param_embedding=z_conditioning,
+                normalization=self.normalization,
                 name=f"down_{i}_1",
             )(x, time_emb, param_emb)
-            if self.attention:
-                x = AttnBlock(name=f"down_{i}.attnblock_0")(x)
             xs.append(x)
 
             if i < len(self.filter_mults) - 1:
@@ -288,14 +191,14 @@ class UNET(nn.Module):
             filters=self.start_filters * self.filter_mults[-1],
             activation=self.activation,
             param_embedding=z_conditioning,
+            normalization=self.normalization,
             name="middle_0",
         )(x, time_emb, param_emb)
-        if self.attention:
-            x = AttnBlock(use_linear_attention=False, name="mid.attenblock_0")(x)
         x = ResidualBlock(
             filters=self.start_filters * self.filter_mults[-1],
             activation=self.activation,
             param_embedding=z_conditioning,
+            normalization=self.normalization,
             name="middle_1",
         )(x, time_emb, param_emb)
 
@@ -305,6 +208,7 @@ class UNET(nn.Module):
                 filters=self.start_filters * mult,
                 activation=self.activation,
                 param_embedding=z_conditioning,
+                normalization=self.normalization,
                 name=f"up_{i}_0",
             )(jnp.concatenate((xs.pop(), x), axis=-1), time_emb, param_emb)
 
@@ -312,10 +216,9 @@ class UNET(nn.Module):
                 filters=self.start_filters * mult,
                 activation=self.activation,
                 param_embedding=z_conditioning,
+                normalization=self.normalization,
                 name=f"up_{i}_1",
             )(jnp.concatenate((xs.pop(), x), axis=-1), time_emb, param_emb)
-            if self.attention:
-                x = AttnBlock(name=f"up_{i}.attnblock_0")(x)
 
             if i < len(self.filter_mults) - 1:
                 x = Upsample(self.start_filters * mult // 2, name=f"upsample_{i}")(x)
@@ -324,6 +227,7 @@ class UNET(nn.Module):
             filters=self.out_channels,
             activation=self.activation, 
             param_embedding=z_conditioning,
+            normalization=self.normalization,
             name="final_resblock"
         )(x, time_emb, param_emb)
 
@@ -334,16 +238,19 @@ class EncodingResidualBlock(nn.Module):
 
     filters: int
     activation: Callable
+    normalization : bool
 
     @nn.compact
     def __call__(self, x):
 
         y = nn.Conv(self.filters, kernel_size=(3,), strides=1, padding="SAME")(x)
-        y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
+        if self.normalization:
+            y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
         y = self.activation(y)
 
         y = nn.Conv(self.filters, kernel_size=(3,), strides=1, padding="SAME")(y)
-        y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
+        if self.normalization:
+            y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
 
         # restore channel dimension for ups
         if x.shape[-1] != self.filters:
@@ -358,7 +265,6 @@ class Encoder(nn.Module):
     filter_mults: Sequence[int]
     latent_dim: int
     activation: Callable
-    attention: bool
 
     @nn.compact
     def __call__(self, x):
@@ -376,6 +282,7 @@ class Encoder(nn.Module):
             x = EncodingResidualBlock(
                 filters=self.start_filters * mult,
                 activation=self.activation,
+                normalization=self.normalization,
                 name=f"down_{i}_0",
             )(x)
             xs.append(x)
@@ -383,11 +290,10 @@ class Encoder(nn.Module):
             x = EncodingResidualBlock(
                 filters=self.start_filters * mult,
                 activation=self.activation,
+                normalization=self.normalization,
                 name=f"down_{i}_1",
             )(x)
 
-            if self.attention:
-                x = AttnBlock(name=f"down_{i}.attnblock_0")(x)
             xs.append(x)
 
             if i < len(self.filter_mults) - 1:
@@ -400,10 +306,9 @@ class Encoder(nn.Module):
         x = EncodingResidualBlock(
             filters=self.start_filters * self.filter_mults[-1],
             activation=self.activation,
+            normalization=self.normalization,
             name="middle_0",
         )(x)
-        if self.attention:
-            x = AttnBlock(use_linear_attention=False, name="mid.attenblock_0")(x)
         x = x.reshape((x.shape[0], -1))
         x = nn.Dense(self.latent_dim)(x)
         return x

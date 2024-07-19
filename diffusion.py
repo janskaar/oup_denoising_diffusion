@@ -174,6 +174,7 @@ def create_train_state(rng, config: ml_collections.ConfigDict):
         use_encoder=config.model.use_encoder,
         use_parameters=config.model.use_parameters,
         attention=config.model.use_attention,
+        normalization=config.model.normalization
     )
 
     rng, rng_params = jax.random.split(rng, 2)
