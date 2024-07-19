@@ -39,7 +39,6 @@ model.filter_mults = (1, 2, 4, 8)
 model.encoder_start_filters = 16
 model.encoder_filter_mults = (1, 2, 4, 8)
 model.encoder_latent_dim = 4
-model.use_attention = False
 
 # optim
 config.optim = optim = ml_collections.ConfigDict()
