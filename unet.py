@@ -47,12 +47,14 @@ class ResidualBlock(nn.Module):
     filters: int
     activation: Callable
     param_embedding : bool
+    normalization : bool
 
     @nn.compact
     def __call__(self, x, time_emb, param_emb):
 
         y = nn.Conv(self.filters, kernel_size=(3,), strides=1, padding="SAME")(x)
-        y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
+        if self.normalization:
+            y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
         y = self.activation(y)
 
         # add in time and param embedding
@@ -79,7 +81,8 @@ class ResidualBlock(nn.Module):
             y = y * (1 + param_scale) + param_shift
 
         y = nn.Conv(self.filters, kernel_size=(3,), strides=1, padding="SAME")(y)
-        y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
+        if self.normalization:
+            y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
 
         # restore channel dimension for ups
         if x.shape[-1] != self.filters:
@@ -117,6 +120,7 @@ class UNET(nn.Module):
     encoder_start_filters: int
     encoder_filter_mults: Sequence[int]
     encoder_latent_dim: int
+    normalization : bool
 
     use_encoder: bool
     use_parameters : bool
@@ -160,6 +164,7 @@ class UNET(nn.Module):
                 filters=self.start_filters * mult,
                 activation=self.activation,
                 param_embedding=z_conditioning,
+                normalization=self.normalization,
                 name=f"down_{i}_0",
             )(x, time_emb, param_emb)
             xs.append(x)
@@ -168,6 +173,7 @@ class UNET(nn.Module):
                 filters=self.start_filters * mult,
                 activation=self.activation,
                 param_embedding=z_conditioning,
+                normalization=self.normalization,
                 name=f"down_{i}_1",
             )(x, time_emb, param_emb)
             xs.append(x)
@@ -183,12 +189,14 @@ class UNET(nn.Module):
             filters=self.start_filters * self.filter_mults[-1],
             activation=self.activation,
             param_embedding=z_conditioning,
+            normalization=self.normalization,
             name="middle_0",
         )(x, time_emb, param_emb)
         x = ResidualBlock(
             filters=self.start_filters * self.filter_mults[-1],
             activation=self.activation,
             param_embedding=z_conditioning,
+            normalization=self.normalization,
             name="middle_1",
         )(x, time_emb, param_emb)
 
@@ -198,6 +206,7 @@ class UNET(nn.Module):
                 filters=self.start_filters * mult,
                 activation=self.activation,
                 param_embedding=z_conditioning,
+                normalization=self.normalization,
                 name=f"up_{i}_0",
             )(jnp.concatenate((xs.pop(), x), axis=-1), time_emb, param_emb)
 
@@ -205,6 +214,7 @@ class UNET(nn.Module):
                 filters=self.start_filters * mult,
                 activation=self.activation,
                 param_embedding=z_conditioning,
+                normalization=self.normalization,
                 name=f"up_{i}_1",
             )(jnp.concatenate((xs.pop(), x), axis=-1), time_emb, param_emb)
 
@@ -215,6 +225,7 @@ class UNET(nn.Module):
             filters=self.out_channels,
             activation=self.activation, 
             param_embedding=z_conditioning,
+            normalization=self.normalization,
             name="final_resblock"
         )(x, time_emb, param_emb)
 
@@ -225,16 +236,19 @@ class EncodingResidualBlock(nn.Module):
 
     filters: int
     activation: Callable
+    normalization : bool
 
     @nn.compact
     def __call__(self, x):
 
         y = nn.Conv(self.filters, kernel_size=(3,), strides=1, padding="SAME")(x)
-        y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
+        if self.normalization:
+            y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
         y = self.activation(y)
 
         y = nn.Conv(self.filters, kernel_size=(3,), strides=1, padding="SAME")(y)
-        y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
+        if self.normalization:
+            y = nn.LayerNorm(reduction_axes=(-1, -2))(y)
 
         # restore channel dimension for ups
         if x.shape[-1] != self.filters:
@@ -266,6 +280,7 @@ class Encoder(nn.Module):
             x = EncodingResidualBlock(
                 filters=self.start_filters * mult,
                 activation=self.activation,
+                normalization=self.normalization,
                 name=f"down_{i}_0",
             )(x)
             xs.append(x)
@@ -273,6 +288,7 @@ class Encoder(nn.Module):
             x = EncodingResidualBlock(
                 filters=self.start_filters * mult,
                 activation=self.activation,
+                normalization=self.normalization,
                 name=f"down_{i}_1",
             )(x)
 
@@ -288,6 +304,7 @@ class Encoder(nn.Module):
         x = EncodingResidualBlock(
             filters=self.start_filters * self.filter_mults[-1],
             activation=self.activation,
+            normalization=self.normalization,
             name="middle_0",
         )(x)
         x = x.reshape((x.shape[0], -1))
