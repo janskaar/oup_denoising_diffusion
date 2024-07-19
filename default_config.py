@@ -27,6 +27,7 @@ data.X_train_path = os.path.join("data", "z.npy")
 data.Theta_train_path = os.path.join("data", "theta.npy")
 data.X_fixed_points_path = os.path.join("data", "z_fixed_points.npy")
 data.Theta_fixed_points_path = os.path.join("data", "theta_fixed_points.npy")
+data.norm_axis = 1 # data has shape (N, time, channel)
 
 
 # model

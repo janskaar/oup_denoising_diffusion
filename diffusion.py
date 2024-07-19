@@ -257,10 +257,10 @@ def train_step(rng, state, x, condition, ddpm_params, loss_fn):
     return new_state, metrics
 
 
-def norm_data(X, Theta):
+def norm_data(X, Theta, axis):
     # mean 0, std 1
-    X = X - X.mean(axis=1, keepdims=True)
-    X /= X.std(axis=1, keepdims=True)
+    X = X - X.mean(axis=axis, keepdims=True)
+    X /= X.std(axis=axis, keepdims=True)
 
     # limit to [-1, 1]
     Theta = Theta - Theta.min(axis=0, keepdims=True)
@@ -319,12 +319,13 @@ def train(config):
     ## Load data
     X = np.load(config.data.X_train_path)
     Theta = np.load(config.data.Theta_train_path)
-    X, Theta = norm_data(X, Theta)
+    X, Theta = norm_data(X, Theta, axis=config.data.norm_axis)
 
     X_fp = np.load(config.data.X_fixed_points_path)
-    Theta_fp = np.load(config.data.Theta_fixed_points_path)
-    X_fp, Theta_fp = norm_data(X_fp, Theta_fp)
     X_fp = X_fp[:, 1024:2048, :]
+    Theta_fp = np.load(config.data.Theta_fixed_points_path)
+    X_fp, Theta_fp = norm_data(X_fp, Theta_fp, axis=config.data.norm_axis)
+
 
     train_gen = partial(
         train_data_gen, batch_size=config.data.batch_size, X=X, Theta=Theta
