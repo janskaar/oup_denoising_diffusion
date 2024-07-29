@@ -1,3 +1,4 @@
+import h5py
 from functools import partial
 from dataclasses import dataclass
 import numpy as np
@@ -146,25 +147,6 @@ def compute_log_prob_normed_params(p, x):
     p = p + jnp.array([1, 5, 1, 5])
 
     return compute_log_prob(p, x)
-
-
-
-x = zs[0].T.reshape(-1)
-params2 = SimulationParameters(
-    num_procs=num_procs,
-    sigma_noise=4.0,
-    tau_x=7,
-    tau_y=5,
-    C=9,
-)
-
-p = jnp.array([params.sigma_noise,
-               params.tau_x,
-               params.tau_y,
-               params.C])
-
-
-pot = partial(compute_log_prob, x=x[:128])
 
 ## 
 
@@ -315,19 +297,59 @@ sample = np.array([s.x for s in states if s.accepted])
 
 ##
 
-# fig, ax = plt.subplots(4, 4)
-# phi = np.arctan(1080 / 1920)
-# sz = (14 * np.cos(phi), 14 * np.sin(phi))
-# fig.set_size_inches(*sz)
-# fig.subplots_adjust(wspace=0.4, hspace=0.4)
-# 
-# param_names = ["Sigma", "tau_x", "tau_y", "C"]
-# encoding_names = [f"Encoding_{i}" for i in range(6)]
-# 
-# for i in range(4):
-#     for j in range(4):
-#         ax[i,j].scatter(sample[:,j], sample[:,i], s=2)
-# 
-# plt.show()
-# 
+with h5py.File("mcmc_samples.h5", "r") as f:
+    chains = []
+    for i in range(20):
+        chains.append(f[f"chain_{i}"][()])
+
+sample = np.concatenate(chains)
+
+
+minnum = min([len(c) for c in chains])
+minsample = np.array([c[:minnum] for c in chains])
+
+chain_means = minsample.mean(1)
+chain_vars = minsample.var(1, ddof=1)
+grand_means = chain_means.mean(0)
+
+J = minsample.shape[0]
+L = minsample.shape[1]
+B = L * chain_means.var(0, ddof=1)
+W = chain_vars.mean(0)
+GR = ( (L - 1) / L * W + 1 / L * B ) / W
+
+
+
+## 
+
+fig, ax = plt.subplots(4, 4)
+phi = np.arctan(1080 / 1920)
+sz = (14 * np.cos(phi), 14 * np.sin(phi))
+fig.set_size_inches(*sz)
+fig.subplots_adjust(wspace=0.4, hspace=0.4)
+
+param_names = ["Sigma", "tau_x", "tau_y", "C"]
+encoding_names = [f"Encoding_{i}" for i in range(6)]
+true_val = np.array([4., 7., 2., 9.])
+true_val -= np.array([1., 5., 1., 5.])
+true_val /= np.array([4., 5., 4., 5.])
+
+for i in range(4):
+    for j in range(4):
+        for k in range(20):
+            ax[i,j].scatter(chains[k][:,j], chains[k][:,i], s=1)
+        ax[i,j].scatter(true_val[j], true_val[i], s=10, color="black")
+        ax[i,j].set_xlim(0, 1)
+        ax[i,j].set_ylim(0, 1)
+
+plt.show()
+
+
+##
+
+
+
+
+
+
 
