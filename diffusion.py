@@ -257,14 +257,24 @@ def train_step(rng, state, x, condition, ddpm_params, loss_fn):
     return new_state, metrics
 
 
-def norm_data(X, Theta, axis):
+def norm_data(X, Theta, axis, base_X=None, base_Theta=None):
+    """
+    Normalize X by the mean and standard deviation of base_X.
+    Normalize Theta by the min and max value of base_Theta, such that
+    base_Theta is in the interval [-1, 1]
+    """
+    if base_X is None:
+        base_X = X
+    if base_Theta is None:
+        base_Theta = Theta
+
     # mean 0, std 1
-    X = X - X.mean(axis=axis, keepdims=True)
-    X /= X.std(axis=axis, keepdims=True)
+    X = X - base_X.mean(axis=axis, keepdims=True)
+    X /= base_X.std(axis=axis, keepdims=True)
 
     # limit to [-1, 1]
-    Theta = Theta - Theta.min(axis=0, keepdims=True)
-    Theta /= Theta.max(axis=0, keepdims=True)
+    Theta = Theta - base_Theta.min(axis=0, keepdims=True)
+    Theta /= base_Theta.max(axis=0, keepdims=True)
     Theta *= 2
     Theta -= 1
     return X, Theta
