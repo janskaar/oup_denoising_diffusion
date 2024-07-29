@@ -16,11 +16,9 @@ from numpyro.infer import MCMC, NUTS
 
 from simulator import SimulationParameters, ParticleSimulator
 
-
-
 jax.config.update("jax_enable_x64", True)
 
-# ##  Sanity check
+##  Sanity check
 num_procs = 10000
 params = SimulationParameters(
     num_procs=num_procs,
@@ -35,34 +33,8 @@ z0 = np.zeros((num_procs, 2))
 simulator = ParticleSimulator(z0, params)
 simulator.simulate(3000)
 zs = simulator.z[:30000:10][-1024:].transpose((1,0,2))
-
-# delta_s = jnp.arange(1024)
-# cov = compute_ou_temporal_covariance(delta_s, params)
-# cov_sim = compute_sample_temporal_covariance(zs[:,0], zs)
-# 
-# 
-# 
-# fig, ax = plt.subplots(2, 2, sharex=True)
-# fig.set_size_inches(10,10)
-# 
-# ax[0,0].plot(cov_sim[:,0,0], label="simulation")
-# ax[0,0].plot(cov[0,:1024], label="theory")
-# ax[0,0].legend()
-# 
-# ax[0,1].plot(cov_sim[:,0,1])
-# ax[0,1].plot(cov[0,1024:])
-# 
-# ax[1,0].plot(cov_sim[:,1,0])
-# ax[1,0].plot(cov[1024,:1024])
-# 
-# ax[1,1].plot(cov_sim[:,1,1])
-# ax[1,1].plot(cov[1024,1024:])
-# 
-# ax[0,0].set_xlim(0, 50)
-# 
-# plt.show()
-# 
-# ## 
+ 
+## 
 
 
 def compute_stationary_covariance(p):
@@ -220,6 +192,7 @@ def adapt_cov(state):
 def proposal(key, state):
     return jax.random.multivariate_normal(key, mean=jnp.zeros(4, dtype=np.float64), cov=state.cov * state.cov_scale)
 
+@jax.jit
 @partial(jax.vmap, in_axes=(0, 0, None))
 def mh_step(key, state, adapt):
 
@@ -303,6 +276,7 @@ xs = []
 for i in range(5000):
     print(i, end="\r")
     rng, key = jax.random.split(rng)
+    key = jax.random.split(key, num_chains)
     state, x, proposal_logp = mh_step(key, states[-1], False)
     states.append(state)
     prop_logps.append(proposal_logp)
