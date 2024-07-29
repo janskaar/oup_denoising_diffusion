@@ -142,6 +142,7 @@ class UNET(nn.Module):
                 filter_mults=self.encoder_filter_mults,
                 latent_dim=self.encoder_latent_dim,
                 activation=self.activation,
+                normalization=self.normalization
             )(z)
         elif self.use_parameters:
             param_emb = nn.Dense(features=time_dim, name="param_mlp.dense_0")(z)
@@ -265,6 +266,7 @@ class Encoder(nn.Module):
     filter_mults: Sequence[int]
     latent_dim: int
     activation: Callable
+    normalization : bool
 
     @nn.compact
     def __call__(self, x):
