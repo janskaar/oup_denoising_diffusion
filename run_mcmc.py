@@ -226,7 +226,7 @@ rng = jax.random.PRNGKey(123)
 
 warmup_states = [state]
 for i in range(1000):
-    print(i, end="\r")
+    print(f"Warmup step {i+1} of 1000", flush=True)
     rng, key = jax.random.split(rng)
     key = jax.random.split(key, num_chains)
     state, x, proposal_logp = mh_step(key, warmup_states[-1], True)
@@ -236,7 +236,7 @@ states = [warmup_states[-1]]
 prop_logps = []
 xs = []
 for i in range(5000):
-    print(i, end="\r")
+    print(f"Sampling step {i+1} of 5000", flush=True)
     rng, key = jax.random.split(rng)
     key = jax.random.split(key, num_chains)
     state, x, proposal_logp = mh_step(key, states[-1], False)
