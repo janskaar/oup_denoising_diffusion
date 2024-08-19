@@ -39,6 +39,7 @@ model = UNET(
     encoder_filter_mults=config.model.encoder_filter_mults,
     encoder_latent_dim=config.model.encoder_latent_dim,
     use_encoder=config.model.use_encoder,
+    use_parameters=config.model.use_parameters,
     attention=config.model.use_attention,
 )
 
@@ -76,15 +77,26 @@ condition = X[:, 1024:2048]
 ddpm_params = get_ddpm_params(config.ddpm)
 
 
-@jax.vmap
-def KL_mvn(mu0, Sigma0, mu1, Sigma1):
+@partial(jax.vmap, in_axes=(0, 0, 0, 0, None, None))
+def KL_mvn(mu0, Sigma0, mu1, Sigma1, Sigma0_isdiag=False, Sigma1_isdiag=False):
     k = len(Sigma1)
-    Sigma1_inv = jnp.linalg.solve(Sigma1, np.eye(k))
+    if Sigma1_isdiag:
+        diag = jnp.diagonal(Sigma1)
+        Sigma1_inv = jnp.diag(1 / diag)
+        logdet1 = jnp.sum(jnp.log(diag))
+    else:
+        Sigma1_inv = jnp.linalg.solve(Sigma1, np.eye(k))
+        s1, logdet1 = jnp.linalg.slogdet(Sigma1)
+
+    if Sigma2_isdiag:
+        logdet1 = jnp.sum(jnp.log(diag))
+    else:
+        s1, logdet2 = jnp.linalg.slogdet(Sigma1)
+
     t1 = jnp.trace(Sigma1_inv.dot(Sigma0))
     dist = mu1 - mu0
     t2 = dist.T.dot(Sigma1_inv).dot(dist)
     s0, logdet0 = jnp.linalg.slogdet(Sigma0)
-    s1, logdet1 = jnp.linalg.slogdet(Sigma1)
     t4 = logdet1 - logdet0
     return 0.5 * (t1 + t2 + len(mu0) + k + t4)
 
@@ -117,7 +129,7 @@ def compute_unconditional_kl_full_chain(rng, state, X, condition, sigma_OU, ddpm
 
         Sigma_phi = ddpm_params["betas"][t] * jnp.tile(jnp.eye(2048)[None], (num_samples, 1, 1))
 
-        kl = KL_mvn(mu_q, Sigma_q, mu_phi, Sigma_phi)
+        kl = KL_mvn(mu_q, Sigma_q, mu_phi, Sigma_phi, Sigma1_isdiag=True)
 
         carry = {"key": rng}
         return carry, kl
@@ -157,7 +169,7 @@ def compute_conditional_kl_full_chain(rng, state, X, condition, ddpm_params):
 
         Sigma_phi = ddpm_params["betas"][t] * jnp.tile(jnp.eye(2048)[None], (num_samples, 1, 1))
 
-        kl = KL_mvn(mu_tilde, Sigma_tilde, mu_phi, Sigma_phi)
+        kl = KL_mvn(mu_tilde, Sigma_tilde, mu_phi, Sigma_phi, Sigma0_isdiag=True, Sigma1_isdiag=True)
 
         carry = {"key": rng}
         return carry, kl
