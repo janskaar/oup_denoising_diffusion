@@ -29,7 +29,7 @@ model = UNET(
     encoder_filter_mults=config.model.encoder_filter_mults,
     encoder_latent_dim=config.model.encoder_latent_dim,
     use_encoder=config.model.use_encoder,
-    attention=config.model.use_attention,
+    use_parameters=config.model.use_parameters,
 )
 
 optimizer = optax.adam(1e-3)
