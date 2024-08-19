@@ -20,12 +20,12 @@ def compute_stationary_covariance(params):
     Computes the stationary covariance of the O-U process with parameters.
     The naming from the notes are as follows:
         a_1 = 1 / tau_y
-        a_2 = -1 / C
+        a_2 = -1 / c
         a_3 = 1 / tau_x
         b_0 = sqrt(sigma2_noise)
     """
     A = jnp.array([[1 / params.tau_y, 0               ],
-                  [-1 / params.C,     1 / params.tau_x]])
+                  [-1 / params.c,     1 / params.tau_x]])
     s1 = params.sigma2_noise / (2 * A[0,0]) 
     s2 = -( A[1,0] * params.sigma2_noise ) / ( 2 * A[0,0] * (A[0,0] + A[1,1]) )
     s3 = ( A[1,0]**2 * params.sigma2_noise ) / ( 2 * A[0,0] * A[1,1] * (A[0,0] + A[1,1]) )
@@ -44,7 +44,7 @@ def compute_ou_temporal_covariance(delta_s, params):
     cov_s = compute_stationary_covariance(params)
 
     A = jnp.array([[1 / params.tau_y, 0               ],
-                  [-1 / params.C,     1 / params.tau_x]])
+                  [-1 / params.c,     1 / params.tau_x]])
 
     @partial(jax.vmap, in_axes=(None, 0))
     def vectorized_expm(A, s):

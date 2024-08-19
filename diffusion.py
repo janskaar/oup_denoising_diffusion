@@ -17,6 +17,7 @@ from scipy.signal import welch
 
 from sampling import sample_loop, ddpm_sample_step, model_predict
 from unet import UNET, SinusoidalPosEmb
+from generate_data import sample_ou_process, sample_prior_and_ou_process
 
 
 def float_to_str(x):
@@ -326,20 +327,16 @@ def run_to_file(fn, fname, dataname, step, *args):
 def train(config):
     rng = jax.random.PRNGKey(config.seed)
 
-    ## Load data
-    X = np.load(config.data.X_train_path)
-    Theta = np.load(config.data.Theta_train_path)
-    X, Theta = norm_data(X, Theta, axis=config.data.norm_axis)
+    prior_min = np.array(config.data.prior_minvals)
+    prior_max = np.array(config.data.prior_maxvals)
 
-    X_fp = np.load(config.data.X_fixed_points_path)
-    X_fp = X_fp[:, 1024:2048, :]
-    Theta_fp = np.load(config.data.Theta_fixed_points_path)
-    X_fp, Theta_fp = norm_data(X_fp, Theta_fp, axis=config.data.norm_axis)
-
-
-    train_gen = partial(
-        train_data_gen, batch_size=config.data.batch_size, X=X, Theta=Theta
-    )
+    ## Create fixed point data
+    rng, key = jax.random.split(rng)
+    Theta_fp = jax.random.uniform(key, minval=prior_min, maxval=prior_max, shape=(9, 4))
+    Theta_fp = jnp.tile(Theta_fp[:,None,:], (1, 50, 1)).reshape((-1 ,4))
+    rng, key = jax.random.split(rng)
+    keys = jax.random.split(key, 450)
+    X_fp = jax.vmap(sample_ou_process)(keys, Theta_fp)
 
     ## Create data generator, init model
     rng, state_rng = jax.random.split(rng)
@@ -394,22 +391,17 @@ def train(config):
     eval_flag = False
     while True:
         rng, key = jax.random.split(rng)
-        train_iter = train_gen(key)
-        for batch in train_iter:
-            tic = time.time()
-            print(step, end="\r", flush=True)
-            rng, train_step_rng = jax.random.split(rng, 2)
-            condition = batch[0] if config.model.use_encoder else batch[1]
-            state, metrics = train_step_jit(train_step_rng, state, batch[0], condition)
-            toc = time.time()
-            step += 1
-            if step > config.training.num_train_steps:
-                break_flag = True
-                eval_flag = True
-                break
+        batch = sample_prior_and_ou_process(key)
+        condition = batch[0] if config.model.use_encoder else batch[1]
+        state, metrics = train_step_jit(train_step_rng, state, batch[0], condition)
+        step += 1
+        if step > config.training.num_train_steps:
+            break_flag = True
+            eval_flag = True
+            break
 
-            if step % config.training.eval_every == 0:
-                eval_flag = True
+        if step % config.training.eval_every == 0:
+            eval_flag = True
 
         if eval_flag:
             rng, key = jax.random.split(rng)

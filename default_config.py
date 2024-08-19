@@ -23,12 +23,8 @@ config.data = data = ml_collections.ConfigDict()
 data.batch_size = 64
 data.length = 1024
 data.channels = 2
-data.X_train_path = os.path.join("data", "z.npy")
-data.Theta_train_path = os.path.join("data", "theta.npy")
-data.X_fixed_points_path = os.path.join("data", "z_fixed_points.npy")
-data.Theta_fixed_points_path = os.path.join("data", "theta_fixed_points.npy")
-data.norm_axis = (1,) # data has shape (N, time, channel)
-
+data.prior_minvals = (1, 1, 1, 1) # (sigma2_noise, tau_x, tau_y, c)
+data.prior_maxvals = (10, 10, 10, 10)
 
 # model
 config.model = model = ml_collections.ConfigDict()
@@ -39,7 +35,7 @@ model.filter_mults = (1, 2, 4, 8)
 model.encoder_start_filters = 16
 model.encoder_filter_mults = (1, 2, 4, 8)
 model.encoder_latent_dim = 4
-model.normalization = True
+# model.normalization = True
 
 # optim
 config.optim = optim = ml_collections.ConfigDict()
