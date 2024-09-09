@@ -11,7 +11,7 @@ training.num_train_steps = 5000
 training.eval_every = 1000
 training.num_warmup_steps = 500
 training.use_full_loss = False
-
+training.dump_batch = False
 
 # ddpm
 config.ddpm = ddpm = ml_collections.ConfigDict()
@@ -23,8 +23,10 @@ config.data = data = ml_collections.ConfigDict()
 data.batch_size = 64
 data.length = 1024
 data.channels = 2
-data.prior_minvals = (1, 1, 1, 1) # (sigma2_noise, tau_x, tau_y, c)
-data.prior_maxvals = (10, 10, 10, 10)
+data.prior_min = (1, 1, 1, 1) # (sigma2_noise, tau_x, tau_y, c)
+data.prior_max = (10, 10, 10, 10)
+data.norm_shift = 0.
+data.norm_scale = 1.
 
 # model
 config.model = model = ml_collections.ConfigDict()
@@ -35,7 +37,6 @@ model.filter_mults = (1, 2, 4, 8)
 model.encoder_start_filters = 16
 model.encoder_filter_mults = (1, 2, 4, 8)
 model.encoder_latent_dim = 4
-# model.normalization = True
 
 # optim
 config.optim = optim = ml_collections.ConfigDict()

@@ -1,19 +1,14 @@
-from simulator import ParticleSimulator, SimulationParameters
 import numpy as np
-from scipy import stats
 from scipy.linalg import expm
-import scipy.linalg
 import os, time, h5py
 from functools import partial
-import matplotlib.pyplot as plt
+from flax import struct
 import jax.numpy as jnp
 import jax.scipy as jsp
 import jax
 from jax.scipy.linalg import expm as jexpm
 import einops
 
-from diffusion import get_ddpm_params, q_sample
-from default_config import config as config
 
 def compute_stationary_covariance(params):
     """
@@ -156,4 +151,37 @@ def compute_params_forward_conditional_posterior(x_0, x_t, t, ddpm_params):
     mu_tilde = ( jnp.sqrt(alpha_bar_tm1) * beta_t ) / at * x_0 + ( jnp.sqrt(alpha_bar_t) * (1 - alpha_bar_tm1) ) / at * x_t
     Sigma_tilde = ( atm1 / at ) * beta_t * np.eye(2048)
     return mu_tilde, Sigma_tilde
+
+
+# Functions for sampling OU-process
+
+@struct.dataclass
+class OUParams:
+    sigma2_noise : float
+    tau_x : float
+    tau_y : float
+    c : float
+
+
+def sample_ou_process(key, params):
+    delta_s = jnp.arange(1024)
+    cov = compute_ou_temporal_covariance(delta_s, params)
+    sample = jax.random.multivariate_normal(key, mean=np.zeros(2048), cov=cov)
+    return sample.reshape(2, 1024).T
+
+
+@partial(jax.vmap, in_axes=(0, None, None))
+def sample_prior_and_ou_process(key, prior_min, prior_max):
+    rng, key = jax.random.split(key)
+    paramvals = jax.random.uniform(key, minval=prior_min, maxval=prior_max, shape=(4,))
+
+    params = OUParams(sigma2_noise = paramvals[0],
+                      tau_x = paramvals[1],
+                      tau_y = paramvals[2],
+                      c = paramvals[3])
+
+    rng, key = jax.random.split(rng)
+    sample = sample_ou_process(key, params)
+    return sample, paramvals
+
 
