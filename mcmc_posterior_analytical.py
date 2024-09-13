@@ -1,4 +1,4 @@
-import h5py
+import os, h5py
 from functools import partial
 from dataclasses import dataclass
 import numpy as np
@@ -48,14 +48,12 @@ def compute_log_prob_normed_params(p, x):
 
 ## 
 
+target_index = 1
+
+with h5py.File(os.path.join("mcmc_results", "targets.h5"), "r") as f:
+    x0 = f[str(target_index)]["x"][()]
+
 rng = jax.random.PRNGKey(123)
-p0 = OUParams(sigma2_noise=2,
-              tau_x=2,
-              tau_y=2,
-              c=2)
-cov0 = compute_ou_temporal_covariance(jnp.arange(1024), p0)
-rng, key = jax.random.split(rng)
-x0 = jax.random.multivariate_normal(key, mean=jnp.zeros(2048), cov=cov0)
 
 potential_fn = partial(compute_log_prob_normed_params, x=x0)
 
@@ -63,7 +61,7 @@ num_chains = 10
 state = init_state(jnp.tile(jnp.array([[0.5, 0.5, 0.5, 0.5]]), (num_chains, 1)), potential_fn)
 
 warmup_states = [state]
-for i in range(100):
+for i in range(2000):
     print(i, end="\r")
     rng, key = jax.random.split(rng)
     key = jax.random.split(key, num_chains)
@@ -74,7 +72,7 @@ init_state = find_last_accepted_warmups(warmup_states)
 prop_logps = []
 xs = []
 states = [init_state]
-for i in range(500):
+for i in range(10000):
     print(i, end="\r")
     rng, key = jax.random.split(rng)
     key = jax.random.split(key, num_chains)
@@ -83,30 +81,12 @@ for i in range(500):
     prop_logps.append(proposal_logp)
     xs.append(x)
 
+
 sample = [np.array([s.x[i] for s in states if s.accepted[i]]) for i in range(num_chains)]
-outfile = os.path.join(top_dir, f"mcmc_samples_run_{run_id}.h5")
+outfile = os.path.join("mcmc_results", f"mcmc_samples_analytical.h5")
 with h5py.File(outfile, "a") as f:
-    grp = f.create_group(str(obs_index))
-    grp.create_dataset("y", data=y)
+    grp = f.create_group(str(target_index))
+    grp.create_dataset("x", data=x0)
     for i in range(num_chains):
         grp.create_dataset(f"chain_{i}", data=sample[i])
-
-
-
-##
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
